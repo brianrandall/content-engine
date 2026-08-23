@@ -56,9 +56,10 @@ def create_video_job(
 
     slug = slugify(title)
 
-    job_dir = (
-        run_dir
-        / f"{index:02d}_{slug}"
+    job_dir = get_video_job(
+        run_dir,
+        index,
+        title,
     )
 
     (job_dir / "scenes").mkdir(
@@ -77,3 +78,19 @@ def create_video_job(
     )
 
     return job_dir
+
+def get_video_job(
+    run_dir: Path,
+    index: int,
+    title: str,
+) -> Path:
+    """
+    RETURN DIRECTORY OF EXISTING VIDEO JOB
+    """
+
+    slug = slugify(title)
+
+    return (
+        run_dir
+        / f"{index:02d}_{slug}"
+    )

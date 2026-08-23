@@ -5,6 +5,7 @@ from pathlib import Path
 from app.job import (
     create_run,
     create_video_job,
+    get_video_job,
     slugify,
 )
 
@@ -129,8 +130,6 @@ def create_content_video(
     """
 
     title = content["title"]
-
-    slug = slugify(title)
 
     video_dir = create_video_job(
         run_dir,
@@ -893,13 +892,10 @@ def resume_run(run_dir: Path):
         1,
     ):
 
-        slug = slugify(
-            content["title"]
-        )
-
-        video_dir = (
-            run_dir
-            / f"{index:02d}_{slug}"
+        video_dir = get_video_job(
+        run_dir,
+        index,
+        content["title"],
         )
 
         final_video = (
