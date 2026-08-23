@@ -429,6 +429,7 @@ def create_content_video(
     # RENDER SCENES
     # -----------------------------------------------------
 
+
     print(
         "\n🎬 Rendering scenes..."
     )
@@ -449,12 +450,76 @@ def create_content_video(
             / f"scene_{scene_index:02d}.mp4"
         )
 
+        scene_metadata_path = (
+            scenes_dir
+            / f"scene_{scene_index:02d}.json"
+        )
+
+        # -------------------------------------------------
+        # RESUME EXISTING SCENE
+        # -------------------------------------------------
+
+        if (
+            scene_path.exists()
+            and scene_metadata_path.exists()
+        ):
+
+            print(
+                f"\n⏭️ Scene {scene_index} "
+                "already exists."
+            )
+
+            with open(
+                scene_metadata_path,
+                "r",
+                encoding="utf-8",
+            ) as f:
+
+                scene_metadata = json.load(f)
+
+            previous_effect = scene_metadata[
+                "effect"
+            ]
+
+            scene_paths.append(
+                scene_path
+            )
+
+            continue
+
+        # -------------------------------------------------
+        # RENDER NEW SCENE
+        # -------------------------------------------------
+
         previous_effect = create_scene(
             item["image_path"],
             scene_path,
             scene["duration"],
             previous_effect,
         )
+
+        # -------------------------------------------------
+        # SAVE SCENE METADATA
+        # -------------------------------------------------
+
+        with open(
+            scene_metadata_path,
+            "w",
+            encoding="utf-8",
+        ) as f:
+
+            json.dump(
+                {
+                    "effect": previous_effect,
+                    "duration": scene["duration"],
+                    "image_path": str(
+                        item["image_path"]
+                    ),
+                },
+                f,
+                indent=2,
+                ensure_ascii=False,
+            )
 
         scene_paths.append(
             scene_path
