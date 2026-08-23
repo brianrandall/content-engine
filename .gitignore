@@ -1,0 +1,23 @@
+# Environment / secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+contentVenv/
+
+# Generated output
+output/
+
+# Audio / generated media
+*.wav
+*.mp3
+*.mp4
+*.srt
+
+# Local TTS model
+*.onnx
+*.onnx.json
+
+# macOS
+.DS_Store
