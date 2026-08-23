@@ -529,19 +529,27 @@ def create_content_video(
     # VISUAL TRACK
     # -----------------------------------------------------
 
-    print(
-        "\n🎞️ Building visual track..."
-    )
-
     visual_track = (
         video_dir
         / "visual_track.mp4"
     )
 
-    concatenate_scenes(
-        scene_paths,
-        visual_track,
-    )
+    if visual_track.exists():
+
+        print(
+            "\n⏭️ Visual track already exists."
+        )
+
+    else:
+
+        print(
+            "\n🎞️ Building visual track..."
+        )
+
+        concatenate_scenes(
+            scene_paths,
+            visual_track,
+        )
 
     # -----------------------------------------------------
     # FINAL VIDEO
