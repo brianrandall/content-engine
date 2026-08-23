@@ -175,6 +175,8 @@ def create_content_video(
         / f"{index:02d}_{slug}"
     )
 
+    assets_dir = video_dir / "assets"
+
     video_dir.mkdir(
         parents=True,
         exist_ok=True,
@@ -349,6 +351,7 @@ def create_content_video(
         image_path = get_image(
             scene["search"],
             f"scene_{scene_index:02d}.jpg",
+            output_dir=assets_dir,
         )
 
         if image_path is None:

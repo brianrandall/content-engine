@@ -110,10 +110,16 @@ def search_images(query: str, max_results: int = 12):
 def download_image(
     url: str,
     filename: str,
+    output_dir: Path = ASSETS_DIR,
     source_url: str | None = None,
     title: str | None = None,
 ):
-    output_path = ASSETS_DIR / filename
+    output_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    output_path = output_dir / filename
 
     response = requests.get(
         url,
@@ -160,7 +166,11 @@ def download_image(
     return output_path
 
 
-def get_image(query: str, filename: str):
+def get_image(
+    query: str,
+    filename: str,
+    output_dir: Path = ASSETS_DIR,
+):
     """
     Find and download the first usable image.
 
@@ -192,6 +202,7 @@ def get_image(query: str, filename: str):
             return download_image(
                 result["url"],
                 filename,
+                output_dir=output_dir,
                 source_url=result.get("source"),
                 title=result.get("title"),
             )
