@@ -201,22 +201,52 @@ def create_content_video(
         "================================"
     )
 
+
+    audio_path = video_dir / "voice.wav"
+    captions_path = video_dir / "captions.srt"
+
     # -----------------------------------------------------
     # VOICE + CAPTIONS
     # -----------------------------------------------------
 
-    print(
-        "\n🎙️ Generating narration..."
-    )
+    if not audio_path.exists():
+        print(
+            "\n🎙️ Generating narration..."
+        )
+        create_video(
+            content,
+            video_dir,
+        )
+    else:
+        print(
+            "\n⏭️ Narration already exists."
+        )
 
-    create_video(
-        content,
-        video_dir,
-    )
+    if not captions_path.exists():
+        print(
+            "\n📝 Generating captions..."
+        )
+        subprocess.run(
+            [
+                "whisper",
+                str(audio_path),
+                "--model",
+                "base",
+                "--output_format",
+                "srt",
+                "--output_dir",
+                str(video_dir),
+            ],
+            check=True,
+        )
+    else:
+        print(
+            "\n⏭️ Captions already exist."
+        )
 
-    audio_path = (
-        video_dir / "voice.wav"
-    )
+    # -----------------------------------------------------
+    # AUDIO DURATION
+    # -----------------------------------------------------
 
     duration = get_audio_duration(
         audio_path
@@ -228,16 +258,15 @@ def create_content_video(
     )
 
     # -----------------------------------------------------
-    # CAPTIONS
+    # CAPTION FRAMES
     # -----------------------------------------------------
 
     print(
-        "\n📝 Rendering captions..."
+        "\n📝 Rendering caption frames..."
     )
 
     captions = parse_srt(
-        video_dir
-        / "captions.srt"
+        captions_path
     )
 
     render_caption_frames(
