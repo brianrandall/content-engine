@@ -54,8 +54,6 @@ def create_video_job(
     Create an isolated directory for one generated video.
     """
 
-    slug = slugify(title)
-
     job_dir = get_video_job(
         run_dir,
         index,
@@ -78,6 +76,7 @@ def create_video_job(
     )
 
     return job_dir
+
 
 def get_video_job(
     run_dir: Path,
