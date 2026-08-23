@@ -1,10 +1,14 @@
 import json
 import re
 import subprocess
-from datetime import datetime
 from pathlib import Path
 
-from research import (
+from app.job import (
+    create_run,
+    create_video_job,
+)
+
+from app.research import (
     search_web,
     analyze_research,
     discover_topics,
@@ -13,18 +17,18 @@ from research import (
     generate_visual_plan,
 )
 
-from scenes import (
+from app.scenes import (
     create_scene,
 )
 
-from assets import get_image
-from concat_scenes import concatenate_scenes
-from video import create_video
-from captions import (
+from app.assets import get_image
+from app.concat_scenes import concatenate_scenes
+from app.video import create_video
+from app.captions import (
     parse_srt,
     render_caption_frames,
 )
-from final_video import create_final_video
+from app.final_video import create_final_video
 
 
 # =========================================================
@@ -34,8 +38,6 @@ from final_video import create_final_video
 BASE_DIR = Path(__file__).resolve().parents[1]
 
 OUTPUT_DIR = BASE_DIR / "output"
-RUNS_DIR = OUTPUT_DIR / "runs"
-
 
 # =========================================================
 # HELPERS
@@ -129,27 +131,6 @@ def slugify(text: str) -> str:
     return text[:60]
 
 
-def create_run_directory() -> Path:
-    """
-    Create a unique timestamped production run directory.
-    """
-
-    timestamp = datetime.now().strftime(
-        "%Y%m%d_%H%M%S"
-    )
-
-    run_dir = (
-        RUNS_DIR
-        / timestamp
-    )
-
-    run_dir.mkdir(
-        parents=True,
-        exist_ok=False,
-    )
-
-    return run_dir
-
 
 # =========================================================
 # SINGLE VIDEO
@@ -170,17 +151,13 @@ def create_content_video(
 
     slug = slugify(title)
 
-    video_dir = (
-        run_dir
-        / f"{index:02d}_{slug}"
+    video_dir = create_video_job(
+        run_dir,
+        index,
+        title,
     )
 
     assets_dir = video_dir / "assets"
-
-    video_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
 
     video_manifest = {
         "index": index,
@@ -542,7 +519,7 @@ def run_pipeline(
     # CREATE RUN
     # -----------------------------------------------------
 
-    run_dir = create_run_directory()
+    run_dir = create_run(niche)
 
     print(
         f"\n📁 Production run:"
