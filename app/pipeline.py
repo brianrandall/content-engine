@@ -261,19 +261,34 @@ def create_content_video(
     # CAPTION FRAMES
     # -----------------------------------------------------
 
-    print(
-        "\n📝 Rendering caption frames..."
+    caption_frames_complete = (
+        caption_frames_dir
+        / ".complete"
     )
 
-    captions = parse_srt(
-        captions_path
-    )
+    if caption_frames_complete.exists():
 
-    render_caption_frames(
-        captions,
-        duration,
-        caption_frames_dir,
-    )
+        print(
+            "\n⏭️ Caption frames already exist."
+        )
+
+    else:
+
+        print(
+            "\n📝 Rendering caption frames..."
+        )
+
+        captions = parse_srt(
+            captions_path
+        )
+
+        render_caption_frames(
+            captions,
+            duration,
+            caption_frames_dir,
+        )
+
+        caption_frames_complete.touch()
 
     # -----------------------------------------------------
     # VISUAL PLAN
