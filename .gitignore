@@ -21,3 +21,6 @@ output/
 
 # macOS
 .DS_Store
+
+#backups
+*.bak

@@ -299,7 +299,8 @@ def analyze_research(
     results: list,
 ):
     """
-    Analyze supplied search results using Qwen.
+    Analyze supplied search results using Qwen and produce
+    evidence-backed claims tied to specific search results.
     """
 
     prompt = f"""
@@ -311,46 +312,38 @@ Research topic:
 Search results:
 {json.dumps(results, indent=2)}
 
-Analyze the research and return ONLY valid JSON.
+Analyze ONLY the supplied search results.
+
+Return ONLY valid JSON.
 
 Use exactly this structure:
 
 {{
     "topic": "{query}",
-    "key_facts": [
-        "Important factual finding supported by the sources."
-    ],
-    "statistics": [
-        "Important statistic supported by the sources."
-    ],
-    "interesting_findings": [
-        "Interesting or useful finding supported by the sources."
-    ],
-    "content_angles": [
-        "Potential angle for a short-form video."
-    ],
-    "surprising_findings": [
-        "Unexpected or counterintuitive finding supported by the sources."
-    ],
-    "sources": [
+    "claims": [
         {{
-            "title": "Source title",
-            "url": "Source URL"
+            "claim": "A concise factual claim supported by one supplied search result.",
+            "source_index": 0,
+            "evidence": "The specific information from the supplied search result that supports the claim."
         }}
     ]
 }}
 
 Requirements:
 
-- Only include information supported by the supplied search results.
-- Do not invent facts, statistics, companies, studies, or quotes.
-- If a category has no useful information, return an empty array.
-- Keep findings concise.
-- Prioritize facts that could become compelling short-form content.
-- Preserve source URLs so individual claims can be traced back later.
+- Every claim MUST be directly supported by one of the supplied search results.
+- source_index MUST refer to the zero-based index of the supporting search result.
+- Do NOT invent facts, statistics, studies, quotes, names, dates, or locations.
+- Do NOT combine information from multiple sources into a single claim.
+- If a search result does not provide useful evidence, do not use it.
+- Prefer specific, interesting, verifiable claims.
+- Evidence should closely reflect what the source actually says.
+- Do not infer information that is not explicitly supported.
+- Do not invent or modify URLs.
+- Return an empty claims array if the supplied results contain insufficient evidence.
 - Do not use markdown.
 - Do not wrap the JSON in code fences.
-- Do not include any text before or after the JSON.
+- Do not include anything before or after the JSON.
 """
 
     research = ask_qwen_json(
@@ -359,26 +352,118 @@ Requirements:
 
     if not isinstance(research, dict):
         raise RuntimeError(
-            "Research analyzer did not return a JSON object."
+            "Research analyzer did not return "
+            "a JSON object."
         )
 
-    required_fields = {
-        "topic",
-        "key_facts",
-        "statistics",
-        "interesting_findings",
-        "content_angles",
-        "surprising_findings",
-        "sources",
-    }
-
-    missing = required_fields - research.keys()
-
-    if missing:
+    if "topic" not in research:
         raise RuntimeError(
-            "Research analyzer is missing fields: "
-            + ", ".join(sorted(missing))
+            "Research analyzer is missing 'topic'."
         )
+
+    if "claims" not in research:
+        raise RuntimeError(
+            "Research analyzer is missing 'claims'."
+        )
+
+    if not isinstance(
+        research["claims"],
+        list,
+    ):
+        raise RuntimeError(
+            "Research analyzer 'claims' "
+            "must be a list."
+        )
+
+    # -----------------------------------------------------
+    # VALIDATE SOURCE REFERENCES
+    # -----------------------------------------------------
+
+    validated_claims = []
+
+    for index, claim in enumerate(
+        research["claims"],
+        1,
+    ):
+
+        if not isinstance(claim, dict):
+            raise RuntimeError(
+                f"Research claim {index} "
+                "is not an object."
+            )
+
+        required_fields = {
+            "claim",
+            "source_index",
+            "evidence",
+        }
+
+        missing = (
+            required_fields
+            - claim.keys()
+        )
+
+        if missing:
+            raise RuntimeError(
+                f"Research claim {index} "
+                f"is missing fields: "
+                f"{', '.join(sorted(missing))}"
+            )
+
+        source_index = claim[
+            "source_index"
+        ]
+
+        if not isinstance(
+            source_index,
+            int,
+        ):
+            raise RuntimeError(
+                f"Research claim {index} "
+                "'source_index' must be an integer."
+            )
+
+        if not (
+            0
+            <= source_index
+            < len(results)
+        ):
+            raise RuntimeError(
+                f"Research claim {index} "
+                f"references invalid source_index "
+                f"{source_index}."
+            )
+
+        if not claim["claim"].strip():
+            raise RuntimeError(
+                f"Research claim {index} "
+                "has an empty claim."
+            )
+
+        if not claim["evidence"].strip():
+            raise RuntimeError(
+                f"Research claim {index} "
+                "has empty evidence."
+            )
+
+        validated_claims.append(
+            claim
+        )
+
+    # -----------------------------------------------------
+    # PRESERVE ORIGINAL SEARCH RESULTS
+    # -----------------------------------------------------
+
+    research["sources"] = [
+        {
+            "title": result.get("title"),
+            "url": result.get("url"),
+            "snippet": result.get("snippet"),
+        }
+        for result in results
+    ]
+
+    research["claims"] = validated_claims
 
     return research
 
@@ -491,7 +576,7 @@ def generate_content(
 ):
     """
     Generate multiple distinct faceless short-form video
-    content packages from supplied research.
+    content packages using only evidence-backed research claims.
     """
 
     prompt = f"""
@@ -500,11 +585,11 @@ You are a short-form content strategist.
 Topic:
 {query}
 
-Research:
+Evidence-backed research:
 {json.dumps(research, indent=2)}
 
 Create {count} DISTINCT faceless short-form video content packages
-based ONLY on the supplied research.
+based ONLY on the supplied evidence-backed research.
 
 Each package must approach the topic from a meaningfully different
 angle. Do NOT simply rewrite the same script.
@@ -516,6 +601,20 @@ Use these angles:
 3. PRACTICAL
 4. RISK / CONTROVERSY
 5. FUTURE / PREDICTION
+
+IMPORTANT FACTUAL ACCURACY RULES:
+
+- You may ONLY make factual claims contained in the supplied
+  research "claims" array.
+- Do NOT introduce outside facts.
+- Do NOT invent statistics.
+- Do NOT invent names, dates, locations, studies, companies,
+  discoveries, quotes, or numbers.
+- Do NOT infer facts that are not explicitly supported.
+- If the research does not support a detail, leave that detail out.
+- Do NOT fabricate citations or URLs.
+- Treat the supplied research as the complete factual boundary
+  for the narration.
 
 Return ONLY valid JSON.
 
@@ -535,15 +634,16 @@ Each object must use exactly these fields:
 Requirements:
 
 - Every package must be substantially different.
-- Every factual claim must be supported by the supplied research.
-- Do not invent facts, statistics, companies, studies, or quotes.
-- "hook" must be designed to stop someone from scrolling.
-- "narration" contains ONLY words that should actually be spoken aloud.
+- Every factual statement in narration must be supported by
+  the supplied research.
+- "hook" must be supported by the research if it contains
+  a factual claim.
+- "narration" contains ONLY words that should actually be spoken.
 - Do NOT include labels such as HOOK, TITLE, DESCRIPTION, CTA,
   or ANGLE inside narration.
-- Do NOT include markdown.
+- Do NOT use markdown.
 - Do NOT wrap the JSON in code fences.
-- Do NOT include any text before or after the JSON.
+- Do NOT include anything before or after the JSON.
 - Narration should contain approximately 80-140 words.
 """
 
@@ -553,7 +653,8 @@ Requirements:
 
     if not isinstance(content, list):
         raise RuntimeError(
-            "Content generation did not return a JSON array."
+            "Content generation did not return "
+            "a JSON array."
         )
 
     if len(content) != count:
@@ -579,10 +680,13 @@ Requirements:
         if not isinstance(package, dict):
             raise RuntimeError(
                 f"Content package {index} "
-                f"is not a JSON object."
+                "is not a JSON object."
             )
 
-        missing = required_fields - package.keys()
+        missing = (
+            required_fields
+            - package.keys()
+        )
 
         if missing:
             raise RuntimeError(
