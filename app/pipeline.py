@@ -555,13 +555,25 @@ def create_content_video(
     # FINAL VIDEO
     # -----------------------------------------------------
 
-    print(
-        "\n🔥 Creating final video..."
+    final_video = (
+        video_dir
+        / "final_short.mp4"
     )
 
-    final_video = create_final_video(
-        video_dir
-    )
+    if final_video.exists():
+
+        print(
+            "\n⏭️ Final video already exists."
+        )
+    else:
+
+        print(
+            "\n🔥 Creating final video..."
+        )
+
+        final_video = create_final_video(
+            video_dir
+        )
 
     video_manifest["video_path"] = str(
         final_video
