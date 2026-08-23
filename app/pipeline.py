@@ -279,28 +279,48 @@ def create_content_video(
     # VISUAL PLAN
     # -----------------------------------------------------
 
-    print(
-        "\n🎬 Creating visual plan..."
+    visual_plan_path = (
+        video_dir / "visual_plan.json"
     )
 
-    visual_plan = generate_visual_plan(
-        topic,
-        content["narration"],
-    )
+    if visual_plan_path.exists():
 
-    # Save the visual plan so we can inspect it later.
-
-    with open(
-        video_dir / "visual_plan.json",
-        "w",
-        encoding="utf-8",
-    ) as f:
-
-        json.dump(
-            visual_plan,
-            f,
-            indent=2,
+        print(
+            "\n⏭️ Visual plan already exists."
         )
+
+        with open(
+            visual_plan_path,
+            "r",
+            encoding="utf-8",
+        ) as f:
+
+            visual_plan = json.load(f)
+
+    else:
+
+        print(
+            "\n🎬 Creating visual plan..."
+        )
+
+        visual_plan = generate_visual_plan(
+            topic,
+            content["narration"],
+        )
+
+        # Save the visual plan so we can inspect it later.
+
+        with open(
+            visual_plan_path,
+            "w",
+            encoding="utf-8",
+        ) as f:
+
+            json.dump(
+                visual_plan,
+                f,
+                indent=2,
+            )
 
     scenes = visual_plan["scenes"]
 
@@ -329,24 +349,39 @@ def create_content_video(
         1,
     ):
 
+        image_filename = (
+            f"scene_{scene_index:02d}.jpg"
+        )
+
+        image_path = (
+            assets_dir / image_filename
+        )
+
         print(
             f"\n🎞️ Scene {scene_index}: "
             f"{scene['search']}"
         )
 
-        image_path = get_image(
-            scene["search"],
-            f"scene_{scene_index:02d}.jpg",
-            output_dir=assets_dir,
-        )
+        if image_path.exists():
+            print(
+                "   ⏭️ Image already exists."
+            )
+        else:
+            print(
+                "   🖼️ Downloading image..."
+            )
+
+            image_path = get_image(
+                scene["search"],
+                image_filename,
+                output_dir=assets_dir,
+            )
 
         if image_path is None:
-
             print(
                 f"   ~~~ Skipping scene "
                 f"{scene_index}"
             )
-
             continue
 
         successful_scenes.append(
