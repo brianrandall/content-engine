@@ -27,6 +27,7 @@ def create_scene(
     output_path: Path,
     duration: float,
     previous_effect: str | None = None,
+    effect: str | None = None,
 ):
     """
     Turn a still image into a vertical video scene.
@@ -44,15 +45,17 @@ def create_scene(
     # Choose an effect that differs from the previous scene.
     # -----------------------------------------------------
 
-    available_effects = [
-        effect
-        for effect in EFFECTS
-        if effect != previous_effect
-    ]
+    if effect is None:
 
-    effect = random.choice(
-        available_effects
-    )
+        available_effects = [
+            candidate
+            for candidate in EFFECTS
+            if candidate != previous_effect
+        ]
+
+        effect = random.choice(
+            available_effects
+        )
 
     print(
         f"   🎥 Effect: {effect}"
