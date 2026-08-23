@@ -1,11 +1,11 @@
 import json
-import re
 import subprocess
 from pathlib import Path
 
 from app.job import (
     create_run,
     create_video_job,
+    slugify,
 )
 
 from app.research import (
@@ -111,25 +111,6 @@ def normalize_scene_durations(
         scene["duration"] *= scale
 
     return scenes
-
-
-def slugify(text: str) -> str:
-    """
-    Convert a title into a filesystem-friendly slug.
-    """
-
-    text = text.lower()
-
-    text = re.sub(
-        r"[^a-z0-9]+",
-        "_",
-        text,
-    )
-
-    text = text.strip("_")
-
-    return text[:60]
-
 
 
 # =========================================================
