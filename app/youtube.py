@@ -6,9 +6,12 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
+from datetime import datetime, timezone
+
 
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube.readonly",
 ]
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -140,5 +143,60 @@ def upload_video(
         "url": (
             "https://www.youtube.com/watch?v="
             f"{video_id}"
+        ),
+    }
+
+def get_video_stats(
+    video_id: str,
+):
+    """
+    Retrieve current statistics for a YouTube video.
+    """
+
+    youtube = get_youtube_service()
+
+    response = youtube.videos().list(
+        part="statistics,snippet",
+        id=video_id,
+    ).execute()
+
+    items = response.get("items", [])
+
+    if not items:
+        raise RuntimeError(
+            f"YouTube video not found: {video_id}"
+        )
+
+    video = items[0]
+
+    statistics = video.get(
+        "statistics",
+        {},
+    )
+
+    snippet = video.get(
+        "snippet",
+        {},
+    )
+
+    return {
+        "views": int(
+            statistics.get("viewCount", 0)
+        ),
+        "likes": int(
+            statistics.get("likeCount", 0)
+        ),
+        "comments": int(
+            statistics.get("commentCount", 0)
+        ),
+        "shares": None,
+        "saves": None,
+        "published_at": snippet.get(
+            "publishedAt"
+        ),
+        "stats_updated_at": (
+            datetime.now(
+                timezone.utc
+            ).isoformat()
         ),
     }

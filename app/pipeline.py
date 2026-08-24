@@ -34,6 +34,8 @@ from app.final_video import create_final_video
 
 from app.publisher import create_social_manifest
 
+from app.youtube import upload_video
+
 
 # =========================================================
 # PATHS
@@ -613,8 +615,67 @@ def create_content_video(
         video_dir / "visual_plan.json"
     )
 
+    # -----------------------------------------------------
+    # YOUTUBE UPLOAD
+    # -----------------------------------------------------
+
+    manifest_path = video_dir / "manifest.json"
+
+    print(
+        "\n📺 Uploading to YouTube..."
+    )
+
+    try:
+
+        youtube_result = upload_video(
+            video_path=final_video,
+            title=content["title"],
+            description=content["description"],
+        )
+
+        video_manifest["social"]["youtube"].update(
+            {
+                "status": "uploaded",
+                "post_id": youtube_result["post_id"],
+                "url": youtube_result["url"],
+                "published_at": datetime.now().isoformat(),
+                "error": None,
+            }
+        )
+
+        print(
+            "\n✅ YouTube upload complete:"
+        )
+
+        print(
+            f"   {youtube_result['url']}"
+        )
+
+    except Exception as exc:
+
+        video_manifest["social"]["youtube"].update(
+            {
+                "status": "failed",
+                "error": (
+                    f"{type(exc).__name__}: {exc}"
+                ),
+            }
+        )
+
+        print(
+            "\n❌ YouTube upload failed:"
+        )
+
+        print(
+            f"   {type(exc).__name__}: {exc}"
+        )
+
+    # -----------------------------------------------------
+    # SAVE FINAL MANIFEST
+    # -----------------------------------------------------
+
     with open(
-        video_dir / "manifest.json",
+        manifest_path,
         "w",
         encoding="utf-8",
     ) as f:
