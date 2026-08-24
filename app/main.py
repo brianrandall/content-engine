@@ -1,6 +1,5 @@
 import os
 import asyncio
-import json
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -41,8 +40,23 @@ except ImportError:
         rank_trending_topics,
     )
 
+try:
+    from app.instagram import (
+        publish_reel,
+    )
+except ImportError:
+    from instagram import (
+        publish_reel,
+    )
 
-BASE_DIR = Path(__file__).resolve().parents[1]
+
+# =========================================================
+# CONFIG
+# =========================================================
+
+BASE_DIR = Path(
+    __file__
+).resolve().parents[1]
 
 load_dotenv(
     BASE_DIR / ".env"
@@ -73,8 +87,8 @@ async def run(
         Automatically discover and select
         a topic from current trends.
 
-    Telegram is used for control and notifications.
-    Videos are NOT uploaded to Telegram.
+    Generated videos are published to Instagram.
+    Telegram is used for status notifications only.
     """
 
     niche = " ".join(
@@ -137,7 +151,9 @@ async def run(
 
             return
 
-        niche = topics[0]["topic"]
+        niche = topics[0][
+            "topic"
+        ]
 
         await update.message.reply_text(
             "🎯 Topic selected:\n\n"
@@ -195,123 +211,130 @@ async def run(
     await update.message.reply_text(
         "🔥 Production complete!\n\n"
         f"Created {len(completed_videos)}/5 videos.\n\n"
-        "Checking publishing status..."
+        "📤 Publishing to Instagram..."
     )
 
     # -----------------------------------------------------
-    # READ MANIFESTS
+    # INSTAGRAM PUBLISHING
     # -----------------------------------------------------
 
-    youtube_uploaded = 0
-    youtube_pending = 0
+    published = []
+    failed = []
 
-    youtube_links = []
-
-    for video_path in completed_videos:
+    for index, video_path in enumerate(
+        completed_videos,
+        1,
+    ):
 
         video_path = Path(
             video_path
         )
 
-        manifest_path = (
-            video_path.parent
-            / "manifest.json"
-        )
+        if not video_path.exists():
 
-        if not manifest_path.exists():
+            failed.append({
+                "index": index,
+                "path": str(video_path),
+                "error": "File does not exist.",
+            })
+
+            await update.message.reply_text(
+                f"⚠️ Video {index} missing.\n"
+                f"{video_path}"
+            )
 
             continue
+
+        await update.message.reply_text(
+            f"📤 Publishing Reel "
+            f"{index}/{len(completed_videos)}..."
+        )
 
         try:
 
-            with open(
-                manifest_path,
-                "r",
-                encoding="utf-8",
-            ) as f:
-
-                manifest = json.load(f)
-
-        except Exception:
-
-            continue
-
-        youtube = (
-            manifest
-            .get("social", {})
-            .get("youtube", {})
-        )
-
-        status = youtube.get(
-            "status"
-        )
-
-        if status == "uploaded":
-
-            youtube_uploaded += 1
-
-            url = youtube.get(
-                "url"
+            result = await asyncio.to_thread(
+                publish_reel,
+                video_path,
+                (
+                    f"{niche}\n\n"
+                    "🔥 Daily News Content"
+                ),
             )
 
-            if url:
+            published.append({
+                "index": index,
+                "result": result,
+            })
 
-                youtube_links.append(
-                    (
-                        manifest.get(
-                            "title",
-                            "Untitled",
-                        ),
-                        url,
-                    )
-                )
+            await update.message.reply_text(
+                f"✅ Instagram Reel "
+                f"{index} published."
+            )
 
-        else:
+        except Exception as exc:
 
-            youtube_pending += 1
+            failed.append({
+                "index": index,
+                "path": str(video_path),
+                "error": (
+                    f"{type(exc).__name__}: "
+                    f"{exc}"
+                ),
+            })
+
+            await update.message.reply_text(
+                f"❌ Instagram Reel "
+                f"{index} failed.\n\n"
+                f"{type(exc).__name__}: {exc}"
+            )
 
     # -----------------------------------------------------
-    # TELEGRAM NOTIFICATION
+    # FINAL REPORT
     # -----------------------------------------------------
 
     message = (
-        "✅ RUN COMPLETE\n\n"
-        f"🎯 Topic:\n{niche}\n\n"
-        f"🎬 Videos created: "
-        f"{len(completed_videos)}/5\n\n"
-        "📺 YouTube\n"
-        f"Uploaded: "
-        f"{youtube_uploaded}/"
-        f"{len(completed_videos)}\n"
+        "🏁 RUN COMPLETE\n\n"
+        f"Topic: {niche}\n"
+        f"Videos created: "
+        f"{len(completed_videos)}/5\n"
+        f"Instagram published: "
+        f"{len(published)}\n"
+        f"Failed: "
+        f"{len(failed)}"
     )
 
-    if youtube_pending:
+    if published:
 
         message += (
-            f"Pending: "
-            f"{youtube_pending}\n"
+            "\n\n🔥 Published:\n"
         )
 
-    if youtube_links:
+        for item in published:
 
-        message += (
-            "\n🔗 YouTube videos:\n"
-        )
-
-        for title, url in youtube_links:
-
-            message += (
-                f"\n• {title}\n"
-                f"{url}\n"
+            media_id = item[
+                "result"
+            ].get(
+                "media_id",
+                "unknown",
             )
 
-    message += (
-        "\n📱 TikTok: "
-        "not connected yet\n"
-        "📸 Instagram: "
-        "not connected yet\n\n"
-        "Telegram is notification-only."
-    )
+            message += (
+                f"• Reel {item['index']} "
+                f"— {media_id}\n"
+            )
+
+    if failed:
+
+        message += (
+            "\n⚠️ Failures:\n"
+        )
+
+        for item in failed:
+
+            message += (
+                f"• Video {item['index']}: "
+                f"{item['error']}\n"
+            )
 
     await update.message.reply_text(
         message
@@ -384,7 +407,8 @@ async def status(
         "🤖 Content Engine\n\n"
         "Status: ONLINE\n"
         "LLM: Ollama (local)\n"
-        f"Model: {MODEL}"
+        f"Model: {MODEL}\n"
+        "Instagram: ENABLED"
     )
 
 
@@ -413,7 +437,8 @@ async def ask(
         "🧠 Thinking..."
     )
 
-    response = ollama.chat(
+    response = await asyncio.to_thread(
+        ollama.chat,
         model=MODEL,
         messages=[
             {
