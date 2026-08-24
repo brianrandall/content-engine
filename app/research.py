@@ -197,151 +197,304 @@ def search_web(
 # =========================================================
 
 def search_reddit(
-    query: str,
-    subreddit: str | None = None,
+    subreddits: list[str],
     limit: int = 10,
+    sort: str = "hot",
 ):
     """
-    Search Reddit for recent discussions related to a topic.
-    Uses Reddit's RSS endpoint instead of the blocked JSON API.
+    Fetch trending Reddit posts from multiple subreddits.
+
+    Uses Reddit RSS feeds because the JSON API is blocked.
     """
 
-    search_url = "https://www.reddit.com/search.rss"
-
-    params = {
-        "q": query,
-        "sort": "relevance",
-        "t": "month",
-        "limit": limit,
-    }
-
-    if subreddit:
-        params["restrict_sr"] = "on"
-        search_url = (
-            f"https://www.reddit.com/r/"
-            f"{subreddit}/search.rss"
-        )
-
-    response = requests.get(
-        search_url,
-        params=params,
-        headers={
-            "User-Agent": (
-                "Mozilla/5.0 "
-                "(Macintosh; Intel Mac OS X) "
-                "AppleWebKit/537.36 "
-                "(KHTML, like Gecko) "
-                "Chrome/140 Safari/537.36"
-            ),
-            "Accept": "application/rss+xml, application/xml",
-        },
-        timeout=20,
-    )
-
-    response.raise_for_status()
-
+    import time
     import xml.etree.ElementTree as ET
 
-    root = ET.fromstring(response.text)
+    if not isinstance(subreddits, list):
+        raise TypeError(
+            "subreddits must be a list."
+        )
+
+    posts = []
 
     namespace = {
         "atom": "http://www.w3.org/2005/Atom"
     }
 
-    posts = []
+    for subreddit in subreddits:
 
-    entries = root.findall(
-        "atom:entry",
-        namespace,
-    )
-
-    for entry in entries[:limit]:
-
-        title = entry.find(
-            "atom:title",
-            namespace,
+        search_url = (
+            f"https://www.reddit.com/r/"
+            f"{subreddit}/{sort}.rss"
         )
 
-        link = entry.find(
-            "atom:link",
-            namespace,
-        )
+        try:
 
-        author = entry.find(
-            "atom:author/atom:name",
-            namespace,
-        )
+            response = requests.get(
+                search_url,
+                params={
+                    "limit": limit,
+                },
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 "
+                        "(Macintosh; Intel Mac OS X) "
+                        "AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) "
+                        "Chrome/140 Safari/537.36"
+                    ),
+                    "Accept": (
+                        "application/rss+xml, "
+                        "application/xml"
+                    ),
+                },
+                timeout=20,
+            )
 
-        published = entry.find(
-            "atom:published",
-            namespace,
-        )
+            if response.status_code == 429:
 
-        updated = entry.find(
-            "atom:updated",
-            namespace,
-        )
+                print(
+                    f"Reddit rate limit hit for "
+                    f"r/{subreddit}. Skipping."
+                )
 
-        content = entry.find(
-            "atom:content",
-            namespace,
-        )
+                time.sleep(5)
+                continue
 
-        subreddit_name = None
+            response.raise_for_status()
 
-        if link is not None and link.get("href"):
-            parts = link.get("href").split("/")
+            root = ET.fromstring(
+                response.text
+            )
 
-            if "r" in parts:
-                try:
-                    subreddit_index = parts.index("r")
-                    subreddit_name = (
-                        parts[subreddit_index + 1]
-                    )
-                except IndexError:
-                    pass
+            entries = root.findall(
+                "atom:entry",
+                namespace,
+            )
 
-        posts.append(
-            {
-                "title": (
-                    title.text.strip()
-                    if title is not None
-                    and title.text
-                    else ""
-                ),
-                "subreddit": subreddit_name,
-                "score": None,
-                "comments": None,
-                "url": (
-                    link.get("href")
-                    if link is not None
-                    else None
-                ),
-                "selftext": (
-                    content.text.strip()
-                    if content is not None
-                    and content.text
-                    else ""
-                ),
-                "author": (
-                    author.text.strip()
-                    if author is not None
-                    and author.text
-                    else None
-                ),
-                "created_utc": (
-                    published.text
-                    if published is not None
-                    else (
-                        updated.text
-                        if updated is not None
-                        else None
-                    )
-                ),
-            }
-        )
+            for entry in entries[:limit]:
+
+                title = entry.find(
+                    "atom:title",
+                    namespace,
+                )
+
+                link = entry.find(
+                    "atom:link",
+                    namespace,
+                )
+
+                author = entry.find(
+                    "atom:author/atom:name",
+                    namespace,
+                )
+
+                published = entry.find(
+                    "atom:published",
+                    namespace,
+                )
+
+                content = entry.find(
+                    "atom:content",
+                    namespace,
+                )
+
+                posts.append(
+                    {
+                        "title": (
+                            title.text.strip()
+                            if title is not None
+                            and title.text
+                            else ""
+                        ),
+                        "subreddit": subreddit,
+                        "score": None,
+                        "comments": None,
+                        "url": (
+                            link.get("href")
+                            if link is not None
+                            else None
+                        ),
+                        "selftext": (
+                            content.text.strip()
+                            if content is not None
+                            and content.text
+                            else ""
+                        ),
+                        "author": (
+                            author.text.strip()
+                            if author is not None
+                            and author.text
+                            else None
+                        ),
+                        "created_utc": (
+                            published.text
+                            if published is not None
+                            else None
+                        ),
+                    }
+                )
+
+            # Slow down requests so Reddit doesn't
+            # immediately rate-limit the next subreddit.
+            time.sleep(3)
+
+        except requests.RequestException as exc:
+
+            print(
+                f"Reddit request failed for "
+                f"r/{subreddit}: {exc}"
+            )
+
+        except ET.ParseError as exc:
+
+            print(
+                f"Reddit RSS parsing failed for "
+                f"r/{subreddit}: {exc}"
+            )
 
     return posts
+
+def discover_reddit_topics(
+    subreddits: list[str],
+    limit_per_subreddit: int = 5,
+):
+    """
+    Discover potential content topics from
+    trending Reddit discussions.
+    """
+
+    posts = search_reddit(
+        subreddits,
+        limit=limit_per_subreddit,
+        sort="hot",
+    )
+
+    if not posts:
+        return []
+
+    prompt = f"""
+You are a content research analyst.
+
+Trending Reddit discussions:
+
+{json.dumps(
+    posts,
+    indent=2,
+    ensure_ascii=False,
+)}
+
+Identify the most interesting potential topics
+for faceless short-form videos.
+
+Use ONLY information contained in the supplied
+Reddit posts.
+
+Return ONLY valid JSON.
+
+Return this structure:
+
+[
+    {{
+        "topic": "Specific content topic",
+        "reason": "Why this Reddit discussion suggests the topic is interesting",
+        "source_urls": [
+            "Reddit URL"
+        ]
+    }}
+]
+
+Rules:
+
+- Return 5 to 10 topics.
+- Each topic must be meaningfully different.
+- Prefer highly interesting, unusual, surprising,
+  controversial, educational, or curiosity-driven topics.
+- Prefer topics that appear likely to attract broad attention.
+- Do not invent facts.
+- Do not invent Reddit posts or URLs.
+- Every source URL must come from the supplied Reddit posts.
+- Do not use markdown.
+- Do not wrap the JSON in code fences.
+- Do not include anything before or after the JSON.
+"""
+
+    topics = ask_qwen_json(
+        prompt,
+    )
+
+    if not isinstance(topics, list):
+        raise RuntimeError(
+            "Reddit topic discovery did not return "
+            "a JSON array."
+        )
+
+    validated_topics = []
+
+    valid_urls = {
+        post.get("url")
+        for post in posts
+        if post.get("url")
+    }
+
+    for index, topic in enumerate(
+        topics,
+        1,
+    ):
+
+        if not isinstance(topic, dict):
+            raise RuntimeError(
+                f"Reddit topic {index} "
+                "is not a JSON object."
+            )
+
+        required_fields = {
+            "topic",
+            "reason",
+            "source_urls",
+        }
+
+        missing = (
+            required_fields
+            - topic.keys()
+        )
+
+        if missing:
+            raise RuntimeError(
+                f"Reddit topic {index} "
+                f"is missing fields: "
+                f"{', '.join(sorted(missing))}"
+            )
+
+        if not isinstance(
+            topic["source_urls"],
+            list,
+        ):
+            raise RuntimeError(
+                f"Reddit topic {index} "
+                "'source_urls' must be a list."
+            )
+
+        for url in topic["source_urls"]:
+
+            if url not in valid_urls:
+                raise RuntimeError(
+                    f"Reddit topic {index} "
+                    f"references an unknown URL: "
+                    f"{url}"
+                )
+
+        if not topic["topic"].strip():
+            raise RuntimeError(
+                f"Reddit topic {index} "
+                "has an empty topic."
+            )
+
+        validated_topics.append(
+            topic
+        )
+
+    return validated_topics
 
 def discover_topics(
     niche: str,
