@@ -35,7 +35,10 @@ from app.final_video import create_final_video
 
 from app.publisher import create_social_manifest
 
-from app.youtube import upload_video
+from app.youtube import ( 
+    upload_video,
+    get_video_stats,
+)
 
 
 # =========================================================
@@ -668,6 +671,73 @@ def create_content_video(
         print(
             f"   {youtube_result['url']}"
         )
+
+        # -----------------------------------------------------
+        # INITIAL YOUTUBE STATS
+        # -----------------------------------------------------
+
+        try:
+
+            youtube_stats = get_video_stats(
+                youtube_result["post_id"]
+            )
+
+            video_manifest["social"]["youtube"][
+                "published_at"
+            ] = youtube_stats["published_at"]
+
+            video_manifest["social"]["youtube"][
+                "stats"
+            ] = {
+                "views": youtube_stats["views"],
+                "likes": youtube_stats["likes"],
+                "comments": youtube_stats["comments"],
+                "shares": youtube_stats["shares"],
+                "saves": youtube_stats["saves"],
+            }
+
+            video_manifest["social"]["youtube"][
+                "stats_updated_at"
+            ] = youtube_stats[
+                "stats_updated_at"
+            ]
+
+            print(
+                "\n📊 YouTube stats retrieved:"
+            )
+
+            print(
+                f"   Views: "
+                f"{youtube_stats['views']}"
+            )
+
+            print(
+                f"   Likes: "
+                f"{youtube_stats['likes']}"
+            )
+
+            print(
+                f"   Comments: "
+                f"{youtube_stats['comments']}"
+            )
+
+        except Exception as exc:
+
+            print(
+                "\n⚠️ Could not retrieve "
+                "initial YouTube stats:"
+            )
+
+            print(
+                f"   {type(exc).__name__}: {exc}"
+            )
+
+            video_manifest["social"]["youtube"][
+                "error"
+            ] = (
+                f"Stats retrieval: "
+                f"{type(exc).__name__}: {exc}"
+            )
 
     except Exception as exc:
 
