@@ -1,4 +1,5 @@
 import json
+import requests
 
 import ollama
 from ddgs import DDGS
@@ -194,6 +195,153 @@ def search_web(
 # =========================================================
 # TOPIC DISCOVERY
 # =========================================================
+
+def search_reddit(
+    query: str,
+    subreddit: str | None = None,
+    limit: int = 10,
+):
+    """
+    Search Reddit for recent discussions related to a topic.
+    Uses Reddit's RSS endpoint instead of the blocked JSON API.
+    """
+
+    search_url = "https://www.reddit.com/search.rss"
+
+    params = {
+        "q": query,
+        "sort": "relevance",
+        "t": "month",
+        "limit": limit,
+    }
+
+    if subreddit:
+        params["restrict_sr"] = "on"
+        search_url = (
+            f"https://www.reddit.com/r/"
+            f"{subreddit}/search.rss"
+        )
+
+    response = requests.get(
+        search_url,
+        params=params,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 "
+                "(Macintosh; Intel Mac OS X) "
+                "AppleWebKit/537.36 "
+                "(KHTML, like Gecko) "
+                "Chrome/140 Safari/537.36"
+            ),
+            "Accept": "application/rss+xml, application/xml",
+        },
+        timeout=20,
+    )
+
+    response.raise_for_status()
+
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(response.text)
+
+    namespace = {
+        "atom": "http://www.w3.org/2005/Atom"
+    }
+
+    posts = []
+
+    entries = root.findall(
+        "atom:entry",
+        namespace,
+    )
+
+    for entry in entries[:limit]:
+
+        title = entry.find(
+            "atom:title",
+            namespace,
+        )
+
+        link = entry.find(
+            "atom:link",
+            namespace,
+        )
+
+        author = entry.find(
+            "atom:author/atom:name",
+            namespace,
+        )
+
+        published = entry.find(
+            "atom:published",
+            namespace,
+        )
+
+        updated = entry.find(
+            "atom:updated",
+            namespace,
+        )
+
+        content = entry.find(
+            "atom:content",
+            namespace,
+        )
+
+        subreddit_name = None
+
+        if link is not None and link.get("href"):
+            parts = link.get("href").split("/")
+
+            if "r" in parts:
+                try:
+                    subreddit_index = parts.index("r")
+                    subreddit_name = (
+                        parts[subreddit_index + 1]
+                    )
+                except IndexError:
+                    pass
+
+        posts.append(
+            {
+                "title": (
+                    title.text.strip()
+                    if title is not None
+                    and title.text
+                    else ""
+                ),
+                "subreddit": subreddit_name,
+                "score": None,
+                "comments": None,
+                "url": (
+                    link.get("href")
+                    if link is not None
+                    else None
+                ),
+                "selftext": (
+                    content.text.strip()
+                    if content is not None
+                    and content.text
+                    else ""
+                ),
+                "author": (
+                    author.text.strip()
+                    if author is not None
+                    and author.text
+                    else None
+                ),
+                "created_utc": (
+                    published.text
+                    if published is not None
+                    else (
+                        updated.text
+                        if updated is not None
+                        else None
+                    )
+                ),
+            }
+        )
+
+    return posts
 
 def discover_topics(
     niche: str,
