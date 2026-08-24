@@ -31,6 +31,8 @@ from app.captions import (
 )
 from app.final_video import create_final_video
 
+from app.publisher import create_social_manifest
+
 
 # =========================================================
 # PATHS
@@ -154,6 +156,7 @@ def create_content_video(
         "research_path": str(
             video_dir / "research.json"
         ),
+        "social": create_social_manifest(),
     }
 
     research_path = video_dir / "research.json"
@@ -170,6 +173,8 @@ def create_content_video(
             ensure_ascii=False,
         )
 
+    
+
     scenes_dir = (
         video_dir / "scenes"
     )
@@ -183,6 +188,7 @@ def create_content_video(
         parents=True,
         exist_ok=True,
     )
+
 
     print(
         "\n"
