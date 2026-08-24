@@ -13,10 +13,19 @@ except ImportError:
     from pipeline import run_pipeline
 
 try:
-    from app.research import search_web, analyze_research, generate_content
+    from app.research import (
+        search_web, 
+        analyze_research, 
+        generate_content,
+        discover_best_topic,
+    )
 except ImportError:
-    from research import search_web, analyze_research, generate_content
-
+    from research import (
+        search_web, 
+        analyze_research, 
+        generate_content,
+        discover_best_topic,
+    )
 BASE_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(BASE_DIR / ".env")
 
@@ -25,10 +34,54 @@ MODEL = "qwen3:8b"
 
 
 async def run(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     niche = " ".join(context.args)
 
     if not niche:
-        niche = "AI automation"
+
+        await update.message.reply_text(
+            "🔥 No topic supplied.\n\n"
+            "Scanning Reddit for trending topics..."
+        )
+
+        try:
+
+            selected_topic = await asyncio.to_thread(
+                discover_best_topic,
+                [
+                    "todayilearned",
+                    "interestingasfuck",
+                    "technology",
+                    "science",
+                ],
+            )
+
+        except Exception as exc:
+
+            await update.message.reply_text(
+                "❌ Topic discovery failed.\n\n"
+                f"{type(exc).__name__}: {exc}"
+            )
+
+            return
+
+        niche = selected_topic["topic"]
+
+        await update.message.reply_text(
+            "🎯 Topic selected:\n\n"
+            f"{niche}\n\n"
+            "Starting production..."
+        )
+
+    else:
+
+        await update.message.reply_text(
+            "🚀 Starting production run...\n\n"
+            f"Niche: {niche}\n"
+            "Videos: 5\n\n"
+            "This will take a while. "
+            "I'll send the videos here when they're finished."
+        )
 
     await update.message.reply_text(
         f"🚀 Starting production run...\n\n"

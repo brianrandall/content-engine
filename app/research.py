@@ -496,6 +496,129 @@ Rules:
 
     return validated_topics
 
+def discover_best_topic(
+    subreddits: list[str],
+):
+    """
+    Discover trending Reddit topics and select
+    the strongest candidate for video production.
+    """
+
+    topics = discover_reddit_topics(
+        subreddits,
+        limit_per_subreddit=5,
+    )
+
+    if not topics:
+        raise RuntimeError(
+            "Reddit topic discovery returned no topics."
+        )
+
+    prompt = f"""
+You are selecting the single best topic for a
+faceless short-form video production system.
+
+Candidate topics:
+
+{json.dumps(
+    topics,
+    indent=2,
+    ensure_ascii=False,
+)}
+
+Select the ONE topic with the strongest potential
+for audience retention and broad interest.
+
+Consider:
+
+- curiosity
+- surprise
+- unusualness
+- emotional interest
+- broad audience appeal
+- ability to tell a compelling short story
+- potential for strong visual storytelling
+
+Return ONLY valid JSON.
+
+Use exactly this structure:
+
+{{
+    "topic": "Selected topic",
+    "reason": "Why this is the strongest candidate",
+    "source_urls": [
+        "Reddit URL"
+    ]
+}}
+
+Rules:
+
+- The selected topic MUST come from the supplied candidates.
+- Do not invent facts.
+- Do not invent URLs.
+- Every source URL must exist in the supplied candidates.
+- Do not use markdown.
+- Do not wrap the JSON in code fences.
+- Do not include anything before or after the JSON.
+"""
+
+    selected = ask_qwen_json(
+        prompt,
+    )
+
+    if not isinstance(
+        selected,
+        dict,
+    ):
+        raise RuntimeError(
+            "Best-topic selection did not return "
+            "a JSON object."
+        )
+
+    required_fields = {
+        "topic",
+        "reason",
+        "source_urls",
+    }
+
+    missing = (
+        required_fields
+        - selected.keys()
+    )
+
+    if missing:
+        raise RuntimeError(
+            "Best-topic selection is missing fields: "
+            + ", ".join(sorted(missing))
+        )
+
+    valid_topics = {
+        topic["topic"]
+        for topic in topics
+    }
+
+    if selected["topic"] not in valid_topics:
+        raise RuntimeError(
+            "Best-topic selection returned "
+            "a topic that was not supplied."
+        )
+
+    valid_urls = {
+        url
+        for topic in topics
+        for url in topic["source_urls"]
+    }
+
+    for url in selected["source_urls"]:
+
+        if url not in valid_urls:
+            raise RuntimeError(
+                f"Best-topic selection returned "
+                f"an unknown URL: {url}"
+            )
+
+    return selected
+
 def discover_topics(
     niche: str,
     count: int = 10,
