@@ -24,3 +24,7 @@ output/
 
 #backups
 *.bak
+
+#YouTube OAuth Credentials
+credentials/
+token.json

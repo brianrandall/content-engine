@@ -29,6 +29,7 @@ from app.captions import (
     parse_srt,
     render_caption_frames,
 )
+
 from app.final_video import create_final_video
 
 from app.publisher import create_social_manifest

@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 from datetime import datetime, timezone
 
+from app.youtube import upload_video
+
 
 PLATFORMS = [
     "youtube",
@@ -117,3 +119,42 @@ def update_platform_status(
     )
 
     return manifest
+
+def publish_youtube(video_dir: Path):
+    manifest_path = video_dir / "manifest.json"
+
+    manifest = load_manifest(
+        manifest_path
+    )
+
+    video_path = Path(
+        manifest["video_path"]
+    )
+
+    try:
+        result = upload_video(
+            video_path,
+            manifest["title"],
+            manifest.get("description", ""),
+        )
+
+        update_platform_status(
+            video_dir,
+            "youtube",
+            "published",
+            post_id=result["post_id"],
+            url=result["url"],
+        )
+
+        return result
+
+    except Exception as exc:
+
+        update_platform_status(
+            video_dir,
+            "youtube",
+            "failed",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+
+        raise
