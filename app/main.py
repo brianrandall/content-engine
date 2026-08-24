@@ -1,10 +1,15 @@
 import os
 import asyncio
+import json
 from pathlib import Path
 
 from dotenv import load_dotenv
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+)
 import ollama
 
 try:
@@ -14,58 +19,125 @@ except ImportError:
 
 try:
     from app.research import (
-        search_web, 
-        analyze_research, 
+        search_web,
+        analyze_research,
         generate_content,
-        discover_best_topic,
     )
 except ImportError:
     from research import (
-        search_web, 
-        analyze_research, 
+        search_web,
+        analyze_research,
         generate_content,
-        discover_best_topic,
     )
-BASE_DIR = Path(__file__).resolve().parents[1]
-load_dotenv(BASE_DIR / ".env")
 
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+try:
+    from app.trends import (
+        collect_trends,
+        rank_trending_topics,
+    )
+except ImportError:
+    from trends import (
+        collect_trends,
+        rank_trending_topics,
+    )
+
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+
+load_dotenv(
+    BASE_DIR / ".env"
+)
+
+TOKEN = os.getenv(
+    "TELEGRAM_BOT_TOKEN"
+)
+
 MODEL = "qwen3:8b"
 
 
-async def run(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# =========================================================
+# PRODUCTION RUN
+# =========================================================
 
-    niche = " ".join(context.args)
+async def run(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    """
+    Run the content production pipeline.
+
+    /run <topic>
+        Use a manually supplied topic.
+
+    /run
+        Automatically discover and select
+        a topic from current trends.
+
+    Telegram is used for control and notifications.
+    Videos are NOT uploaded to Telegram.
+    """
+
+    niche = " ".join(
+        context.args
+    ).strip()
+
+    # -----------------------------------------------------
+    # AUTONOMOUS TOPIC DISCOVERY
+    # -----------------------------------------------------
 
     if not niche:
 
         await update.message.reply_text(
             "🔥 No topic supplied.\n\n"
-            "Scanning Reddit for trending topics..."
+            "Scanning current trends..."
         )
 
         try:
 
-            selected_topic = await asyncio.to_thread(
-                discover_best_topic,
-                [
-                    "todayilearned",
-                    "interestingasfuck",
-                    "technology",
-                    "science",
-                ],
+            trends = await asyncio.to_thread(
+                collect_trends,
+                hackernews_limit=10,
+            )
+
+            if not trends:
+
+                await update.message.reply_text(
+                    "❌ Trend collection returned "
+                    "no usable trends."
+                )
+
+                return
+
+            await update.message.reply_text(
+                f"📡 Found {len(trends)} trends.\n"
+                "Finding the strongest topic..."
+            )
+
+            topics = await asyncio.to_thread(
+                rank_trending_topics,
+                trends,
+                5,
             )
 
         except Exception as exc:
 
             await update.message.reply_text(
-                "❌ Topic discovery failed.\n\n"
+                "❌ Trend discovery failed.\n\n"
                 f"{type(exc).__name__}: {exc}"
             )
 
             return
 
-        niche = selected_topic["topic"]
+        if not topics:
+
+            await update.message.reply_text(
+                "❌ Trend discovery returned "
+                "no usable topics."
+            )
+
+            return
+
+        niche = topics[0]["topic"]
 
         await update.message.reply_text(
             "🎯 Topic selected:\n\n"
@@ -73,24 +145,25 @@ async def run(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Starting production..."
         )
 
+    # -----------------------------------------------------
+    # MANUAL TOPIC
+    # -----------------------------------------------------
+
     else:
 
         await update.message.reply_text(
             "🚀 Starting production run...\n\n"
-            f"Niche: {niche}\n"
+            f"Topic: {niche}\n"
             "Videos: 5\n\n"
-            "This will take a while. "
-            "I'll send the videos here when they're finished."
+            "Using manually supplied topic."
         )
 
-    await update.message.reply_text(
-        f"🚀 Starting production run...\n\n"
-        f"Niche: {niche}\n"
-        f"Videos: 5\n\n"
-        "This will take a while. I'll send the videos here when they're finished."
-    )
+    # -----------------------------------------------------
+    # PRODUCTION PIPELINE
+    # -----------------------------------------------------
 
     try:
+
         completed_videos = await asyncio.to_thread(
             run_pipeline,
             niche,
@@ -98,79 +171,215 @@ async def run(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     except Exception as exc:
+
         await update.message.reply_text(
-            f"❌ Production run failed.\n\n"
+            "❌ Production run failed.\n\n"
             f"{type(exc).__name__}: {exc}"
         )
+
         return
 
     if not completed_videos:
+
         await update.message.reply_text(
-            "❌ Production finished, but no videos were created."
+            "❌ Production finished, "
+            "but no videos were created."
         )
+
         return
 
+    # -----------------------------------------------------
+    # PRODUCTION COMPLETE
+    # -----------------------------------------------------
+
     await update.message.reply_text(
-        f"🔥 Production complete!\n\n"
-        f"Created {len(completed_videos)}/5 videos.\n"
-        "Uploading..."
+        "🔥 Production complete!\n\n"
+        f"Created {len(completed_videos)}/5 videos.\n\n"
+        "Checking publishing status..."
     )
 
-    for index, video_path in enumerate(
-        completed_videos,
-        1,
-    ):
-        video_path = Path(video_path)
+    # -----------------------------------------------------
+    # READ MANIFESTS
+    # -----------------------------------------------------
 
-        if not video_path.exists():
-            await update.message.reply_text(
-                f"⚠️ Video {index} is missing:\n"
-                f"{video_path}"
-            )
+    youtube_uploaded = 0
+    youtube_pending = 0
+
+    youtube_links = []
+
+    for video_path in completed_videos:
+
+        video_path = Path(
+            video_path
+        )
+
+        manifest_path = (
+            video_path.parent
+            / "manifest.json"
+        )
+
+        if not manifest_path.exists():
+
             continue
 
-        await update.message.reply_text(
-            f"📤 Uploading video {index}/{len(completed_videos)}..."
+        try:
+
+            with open(
+                manifest_path,
+                "r",
+                encoding="utf-8",
+            ) as f:
+
+                manifest = json.load(f)
+
+        except Exception:
+
+            continue
+
+        youtube = (
+            manifest
+            .get("social", {})
+            .get("youtube", {})
         )
 
-        with open(video_path, "rb") as video_file:
-            await update.message.reply_video(
-                video=video_file,
-                caption=f"🎬 Video {index}/{len(completed_videos)}",
+        status = youtube.get(
+            "status"
+        )
+
+        if status == "uploaded":
+
+            youtube_uploaded += 1
+
+            url = youtube.get(
+                "url"
             )
 
+            if url:
+
+                youtube_links.append(
+                    (
+                        manifest.get(
+                            "title",
+                            "Untitled",
+                        ),
+                        url,
+                    )
+                )
+
+        else:
+
+            youtube_pending += 1
+
+    # -----------------------------------------------------
+    # TELEGRAM NOTIFICATION
+    # -----------------------------------------------------
+
+    message = (
+        "✅ RUN COMPLETE\n\n"
+        f"🎯 Topic:\n{niche}\n\n"
+        f"🎬 Videos created: "
+        f"{len(completed_videos)}/5\n\n"
+        "📺 YouTube\n"
+        f"Uploaded: "
+        f"{youtube_uploaded}/"
+        f"{len(completed_videos)}\n"
+    )
+
+    if youtube_pending:
+
+        message += (
+            f"Pending: "
+            f"{youtube_pending}\n"
+        )
+
+    if youtube_links:
+
+        message += (
+            "\n🔗 YouTube videos:\n"
+        )
+
+        for title, url in youtube_links:
+
+            message += (
+                f"\n• {title}\n"
+                f"{url}\n"
+            )
+
+    message += (
+        "\n📱 TikTok: "
+        "not connected yet\n"
+        "📸 Instagram: "
+        "not connected yet\n\n"
+        "Telegram is notification-only."
+    )
+
     await update.message.reply_text(
-        "✅ Run finished."
+        message
     )
 
 
-async def research(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = " ".join(context.args)
+# =========================================================
+# RESEARCH
+# =========================================================
+
+async def research(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = " ".join(
+        context.args
+    )
 
     if not query:
-        await update.message.reply_text("Usage:\n/research your topic here")
+
+        await update.message.reply_text(
+            "Usage:\n"
+            "/research your topic here"
+        )
+
         return
 
-    await update.message.reply_text("🔎 Searching...")
+    await update.message.reply_text(
+        "🔎 Searching..."
+    )
 
-    results = search_web(query)
+    results = search_web(
+        query
+    )
 
     if not results:
-        await update.message.reply_text("Couldn't find anything...")
+
+        await update.message.reply_text(
+            "Couldn't find anything..."
+        )
+
         return
 
     await update.message.reply_text(
         f"🧠 Found {len(results)} sources. "
-        "Sending them to local Ollama for analysis..."
+        "Sending them to local Ollama "
+        "for analysis..."
     )
 
-    analysis = analyze_research(query, results)
+    analysis = analyze_research(
+        query,
+        results,
+    )
 
     await update.message.reply_text(
-        f"🔎 Research Brief\n\n{analysis}"
+        f"🔎 Research Brief\n\n"
+        f"{analysis}"
     )
 
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+# =========================================================
+# STATUS
+# =========================================================
+
+async def status(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
     await update.message.reply_text(
         "🤖 Content Engine\n\n"
         "Status: ONLINE\n"
@@ -179,14 +388,30 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    question = " ".join(context.args)
+# =========================================================
+# ASK
+# =========================================================
+
+async def ask(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    question = " ".join(
+        context.args
+    )
 
     if not question:
-        await update.message.reply_text("Usage:\n/ask your question here")
+
+        await update.message.reply_text(
+            "Usage:\n"
+            "/ask your question here"
+        )
+
         return
 
-    await update.message.reply_text("🧠 Thinking...")
+    await update.message.reply_text(
+        "🧠 Thinking..."
+    )
 
     response = ollama.chat(
         model=MODEL,
@@ -198,28 +423,52 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
     )
 
-    answer = response["message"]["content"]
-    await update.message.reply_text(answer)
+    answer = response[
+        "message"
+    ][
+        "content"
+    ]
 
-async def content(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = " ".join(context.args)
+    await update.message.reply_text(
+        answer
+    )
+
+
+# =========================================================
+# CONTENT
+# =========================================================
+
+async def content(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = " ".join(
+        context.args
+    )
 
     if not query:
+
         await update.message.reply_text(
-            "Usage:\n/content your topic here"
+            "Usage:\n"
+            "/content your topic here"
         )
+
         return
 
     await update.message.reply_text(
         "🔎 Researching..."
     )
 
-    results = search_web(query)
+    results = search_web(
+        query
+    )
 
     if not results:
+
         await update.message.reply_text(
             "Couldn't find anything."
         )
+
         return
 
     await update.message.reply_text(
@@ -227,10 +476,14 @@ async def content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Reading and analyzing..."
     )
 
-    research = analyze_research(query, results)
+    research = analyze_research(
+        query,
+        results,
+    )
 
     await update.message.reply_text(
-        "✍️ Turning research into a content package..."
+        "✍️ Turning research into "
+        "a content package..."
     )
 
     content_package = generate_content(
@@ -239,23 +492,70 @@ async def content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await update.message.reply_text(
-        f"🎬 CONTENT PACKAGE\n\n{content_package}"
+        f"🎬 CONTENT PACKAGE\n\n"
+        f"{content_package}"
     )
 
 
+# =========================================================
+# APPLICATION
+# =========================================================
+
 def main():
+
     if not TOKEN:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN is not set. Add it to the project .env file.")
 
-    app = Application.builder().token(TOKEN).build()
+        raise RuntimeError(
+            "TELEGRAM_BOT_TOKEN is not set. "
+            "Add it to the project .env file."
+        )
 
-    app.add_handler(CommandHandler("status", status))
-    app.add_handler(CommandHandler("ask", ask))
-    app.add_handler(CommandHandler("research", research))
-    app.add_handler(CommandHandler("content", content))
-    app.add_handler(CommandHandler("run", run))
+    app = (
+        Application
+        .builder()
+        .token(TOKEN)
+        .build()
+    )
 
-    print("Content Engine Telegram bot running...")
+    app.add_handler(
+        CommandHandler(
+            "status",
+            status,
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "ask",
+            ask,
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "research",
+            research,
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "content",
+            content,
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "run",
+            run,
+        )
+    )
+
+    print(
+        "Content Engine Telegram bot running..."
+    )
+
     app.run_polling()
 
 
