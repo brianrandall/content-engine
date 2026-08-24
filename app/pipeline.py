@@ -1,6 +1,7 @@
 import json
 import subprocess
 from pathlib import Path
+from datetime import datetime, timezone
 
 from app.job import (
     create_run,
@@ -616,13 +617,30 @@ def create_content_video(
     )
 
     # -----------------------------------------------------
-    # YOUTUBE UPLOAD
+    # SAVE MANIFEST
     # -----------------------------------------------------
 
     manifest_path = video_dir / "manifest.json"
 
+    with open(
+        manifest_path,
+        "w",
+        encoding="utf-8",
+    ) as f:
+
+        json.dump(
+            video_manifest,
+            f,
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    # -----------------------------------------------------
+    # YOUTUBE UPLOAD
+    # -----------------------------------------------------
+
     print(
-        "\n📺 Uploading to YouTube..."
+        "\n📤 Uploading to YouTube..."
     )
 
     try:
@@ -638,7 +656,7 @@ def create_content_video(
                 "status": "uploaded",
                 "post_id": youtube_result["post_id"],
                 "url": youtube_result["url"],
-                "published_at": datetime.now().isoformat(),
+                "published_at": None,
                 "error": None,
             }
         )
@@ -663,7 +681,7 @@ def create_content_video(
         )
 
         print(
-            "\n❌ YouTube upload failed:"
+            "\n⚠️ YouTube upload failed:"
         )
 
         print(
@@ -671,7 +689,7 @@ def create_content_video(
         )
 
     # -----------------------------------------------------
-    # SAVE FINAL MANIFEST
+    # SAVE UPDATED MANIFEST
     # -----------------------------------------------------
 
     with open(
