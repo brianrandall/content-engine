@@ -101,6 +101,16 @@ HN_ITEM = (
     "v0/item/{item_id}.json"
 )
 
+DEFAULT_REDDIT_SUBREDDITS = [
+    "technology",
+    "artificial",
+    "hardware",
+    "Futurology",
+    "science",
+    "gadgets",
+    "programming",
+    "MachineLearning",
+]
 
 def fetch_hackernews_trends(
     limit: int = 20,
@@ -199,6 +209,9 @@ def collect_trends(
     """
     Collect trends from all currently supported sources.
     """
+
+    if reddit_subreddits is None:
+        reddit_subreddits = DEFAULT_REDDIT_SUBREDDITS
 
     trends = []
 
@@ -306,17 +319,14 @@ Rules:
 
 - Return up to {count} topics.
 - Prefer topics with strong curiosity.
-- Prefer surprising, unusual, counterintuitive,
-  controversial, or highly interesting subjects.
-- Prefer topics that can be explained clearly
-  in 30-90 seconds.
+- Prefer surprising, unusual, counterintuitive, controversial, or highly interesting subjects.
+- Prefer topics that can be explained clearly in 30-90 seconds.
 - Every topic MUST be supported by supplied trend data.
 - Do NOT invent facts.
 - Do NOT invent URLs.
 - Do NOT invent sources.
 - Do NOT combine unrelated trends.
-- A topic may use multiple sources only when
-  those sources clearly concern the same subject.
+- A topic may use multiple sources only when those sources clearly concern the same subject.
 - Preserve source titles and URLs exactly.
 - Do not use markdown.
 - Do not wrap the JSON in code fences.
