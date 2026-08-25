@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 
 from app.youtube import upload_video
 
+from app.instagram import publish_reel
+
 
 PLATFORMS = [
     "youtube",
@@ -153,6 +155,48 @@ def publish_youtube(video_dir: Path):
         update_platform_status(
             video_dir,
             "youtube",
+            "failed",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+
+        raise
+
+def publish_instagram(video_dir: Path):
+    manifest_path = video_dir / "manifest.json"
+
+    manifest = load_manifest(
+        manifest_path
+    )
+
+    video_path = Path(
+        manifest["video_path"]
+    )
+
+    caption = manifest.get(
+        "description",
+        "",
+    )
+
+    try:
+        result = publish_reel(
+            video_path,
+            caption=caption,
+        )
+
+        update_platform_status(
+            video_dir,
+            "instagram",
+            "published",
+            post_id=result["media_id"],
+        )
+
+        return result
+
+    except Exception as exc:
+
+        update_platform_status(
+            video_dir,
+            "instagram",
             "failed",
             error=f"{type(exc).__name__}: {exc}",
         )
