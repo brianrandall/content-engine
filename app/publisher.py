@@ -216,12 +216,8 @@ def update_platform_status(
     return manifest
 
 
-def publish_youtube(
-    video_dir: Path,
-):
-    manifest_path = (
-        video_dir / "manifest.json"
-    )
+def publish_youtube(video_dir: Path):
+    manifest_path = video_dir / "manifest.json"
 
     manifest = load_manifest(
         manifest_path
@@ -253,6 +249,46 @@ def publish_youtube(
         return result
 
     except Exception as exc:
+
+        error_text = str(exc)
+
+        # -------------------------------------------------
+        # YOUTUBE UPLOAD LIMIT
+        # -------------------------------------------------
+
+        if (
+            "uploadLimitExceeded"
+            in error_text
+        ):
+
+            update_platform_status(
+                video_dir,
+                "youtube",
+                "upload_limit",
+                error=(
+                    f"{type(exc).__name__}: "
+                    f"{exc}"
+                ),
+            )
+
+            print(
+                "\n⚠️ YouTube upload limit reached."
+            )
+
+            print(
+                "   Skipping YouTube upload."
+            )
+
+            return {
+                "platform": "youtube",
+                "status": "upload_limit",
+                "post_id": None,
+                "url": None,
+            }
+
+        # -------------------------------------------------
+        # OTHER YOUTUBE FAILURE
+        # -------------------------------------------------
 
         update_platform_status(
             video_dir,
