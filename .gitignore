@@ -24,7 +24,11 @@ output/
 
 #backups
 *.bak
+*.backup
 
 #YouTube OAuth Credentials
 credentials/
 token.json
+
+#Runtime logs
+logs/

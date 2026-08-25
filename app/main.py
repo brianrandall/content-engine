@@ -41,12 +41,16 @@ except ImportError:
     )
 
 try:
-    from app.instagram import (
-        publish_reel,
+    from app.publisher import (
+        load_manifest,
+        publish_instagram,
+        publish_youtube,
     )
 except ImportError:
-    from instagram import (
-        publish_reel,
+    from publisher import (
+        load_manifest,
+        publish_instagram,
+        publish_youtube,
     )
 
 
@@ -204,19 +208,11 @@ async def run(
 
         return
 
-    # -----------------------------------------------------
-    # PRODUCTION COMPLETE
-    # -----------------------------------------------------
-
     await update.message.reply_text(
         "🔥 Production complete!\n\n"
         f"Created {len(completed_videos)}/5 videos.\n\n"
-        "📤 Publishing to Instagram..."
+        "📤 Publishing is delegated to the publisher layer."
     )
-
-    # -----------------------------------------------------
-    # INSTAGRAM PUBLISHING
-    # -----------------------------------------------------
 
     published = []
     failed = []
@@ -226,119 +222,114 @@ async def run(
         1,
     ):
 
-        video_path = Path(
-            video_path
-        )
+        video_file = Path(video_path)
+        video_dir = video_file.parent
 
-        if not video_path.exists():
-
+        if not video_file.exists():
             failed.append({
                 "index": index,
-                "path": str(video_path),
+                "path": str(video_file),
                 "error": "File does not exist.",
             })
-
             await update.message.reply_text(
-                f"⚠️ Video {index} missing.\n"
-                f"{video_path}"
+                f"⚠️ Video {index} missing.\n{video_file}"
             )
-
             continue
 
+        manifest_path = video_dir / "manifest.json"
+        manifest = load_manifest(manifest_path)
+        social = manifest.get("social", {})
+        youtube_status = social.get("youtube", {}).get("status", "pending")
+        instagram_status = social.get("instagram", {}).get("status", "pending")
+
         await update.message.reply_text(
-            f"📤 Publishing Reel "
-            f"{index}/{len(completed_videos)}..."
+            f"📤 Publishing Reel {index}/{len(completed_videos)}..."
         )
 
+        result = {
+            "video_generated": True,
+            "youtube": {"status": youtube_status},
+            "instagram": {"status": instagram_status},
+        }
+
         try:
-
-            result = await asyncio.to_thread(
-                publish_reel,
-                video_path,
-                (
-                    f"{niche}\n\n"
-                    "🔥 Daily News Content"
-                ),
+            youtube_result = await asyncio.to_thread(
+                publish_youtube,
+                video_dir,
             )
+            result["youtube"] = youtube_result
+        except Exception as exc:
+            result["youtube"] = {
+                "status": "failed",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            failed.append({
+                "index": index,
+                "platform": "youtube",
+                "error": result["youtube"]["error"],
+            })
 
+        try:
+            instagram_result = await asyncio.to_thread(
+                publish_instagram,
+                video_dir,
+            )
+            result["instagram"] = instagram_result
+        except Exception as exc:
+            result["instagram"] = {
+                "status": "failed",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            failed.append({
+                "index": index,
+                "platform": "instagram",
+                "error": result["instagram"]["error"],
+            })
+
+        if (
+            result["youtube"].get("status") == "published"
+            or result["instagram"].get("status") == "published"
+        ):
             published.append({
                 "index": index,
                 "result": result,
             })
 
-            await update.message.reply_text(
-                f"✅ Instagram Reel "
-                f"{index} published."
-            )
-
-        except Exception as exc:
-
-            failed.append({
-                "index": index,
-                "path": str(video_path),
-                "error": (
-                    f"{type(exc).__name__}: "
-                    f"{exc}"
-                ),
-            })
-
-            await update.message.reply_text(
-                f"❌ Instagram Reel "
-                f"{index} failed.\n\n"
-                f"{type(exc).__name__}: {exc}"
-            )
-
-    # -----------------------------------------------------
-    # FINAL REPORT
-    # -----------------------------------------------------
+        youtube_state = result["youtube"].get("status", "pending")
+        instagram_state = result["instagram"].get("status", "pending")
+        await update.message.reply_text(
+            f"📊 Reel {index} status\n"
+            f"YouTube: {youtube_state}\n"
+            f"Instagram: {instagram_state}"
+        )
 
     message = (
         "🏁 RUN COMPLETE\n\n"
         f"Topic: {niche}\n"
-        f"Videos created: "
-        f"{len(completed_videos)}/5\n"
-        f"Instagram published: "
-        f"{len(published)}\n"
-        f"Failed: "
-        f"{len(failed)}"
+        f"Videos generated: {len(completed_videos)}/5\n"
+        f"Videos with at least one successful publish: {len(published)}\n"
+        f"Publish failures: {len(failed)}"
     )
 
     if published:
-
-        message += (
-            "\n\n🔥 Published:\n"
-        )
-
+        message += "\n\n🔥 Successful platform results:\n"
         for item in published:
-
-            media_id = item[
-                "result"
-            ].get(
-                "media_id",
-                "unknown",
-            )
-
+            youtube_status = item["result"].get("youtube", {}).get("status", "pending")
+            instagram_status = item["result"].get("instagram", {}).get("status", "pending")
+            youtube_id = item["result"].get("youtube", {}).get("post_id", "unknown")
+            instagram_id = item["result"].get("instagram", {}).get("media_id", "unknown")
             message += (
-                f"• Reel {item['index']} "
-                f"— {media_id}\n"
+                f"• Reel {item['index']} — "
+                f"YouTube {youtube_status} {youtube_id} / "
+                f"Instagram {instagram_status} {instagram_id}\n"
             )
 
     if failed:
-
-        message += (
-            "\n⚠️ Failures:\n"
-        )
-
+        message += "\n⚠️ Platform failures:\n"
         for item in failed:
+            message += f"• Video {item['index']} ({item['platform']}): {item['error']}\n"
 
-            message += (
-                f"• Video {item['index']}: "
-                f"{item['error']}\n"
-            )
-
-    await update.message.reply_text(
-        message
-    )
+    await update.message.reply_text(message)
 
 
 # =========================================================
