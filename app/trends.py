@@ -1,10 +1,42 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import requests
+import hashlib
 import json
+
+import requests
 
 from app.research import ask_qwen_json
 
+
+# =========================================================
+# CONFIG
+# =========================================================
+
+DEFAULT_REDDIT_SUBREDDITS = [
+    "technology",
+    "artificial",
+    "hardware",
+    "Futurology",
+    "science",
+    "gadgets",
+    "programming",
+    "MachineLearning",
+]
+
+HN_TOP_STORIES = (
+    "https://hacker-news.firebaseio.com/"
+    "v0/topstories.json"
+)
+
+HN_ITEM = (
+    "https://hacker-news.firebaseio.com/"
+    "v0/item/{item_id}.json"
+)
+
+
+# =========================================================
+# TREND MODEL
+# =========================================================
 
 @dataclass
 class TrendItem:
@@ -27,8 +59,23 @@ class TrendItem:
         default_factory=dict
     )
 
+    source_id: str = ""
+
+    def __post_init__(self):
+        if not self.source_id:
+            identity = (
+                f"{self.source}|"
+                f"{self.title}|"
+                f"{self.url or ''}"
+            )
+
+            self.source_id = hashlib.sha1(
+                identity.encode("utf-8")
+            ).hexdigest()[:12]
+
     def to_dict(self):
         return {
+            "source_id": self.source_id,
             "source": self.source,
             "title": self.title,
             "url": self.url,
@@ -37,6 +84,11 @@ class TrendItem:
             "engagement": self.engagement,
             "metadata": self.metadata,
         }
+
+
+# =========================================================
+# REDDIT
+# =========================================================
 
 def reddit_posts_to_trends(
     posts: list[dict],
@@ -49,6 +101,8 @@ def reddit_posts_to_trends(
     trends = []
 
     for post in posts:
+
+        source_id = post.get("id")
 
         trends.append(
             TrendItem(
@@ -67,6 +121,7 @@ def reddit_posts_to_trends(
                 published_at=post.get(
                     "created_utc"
                 ),
+                source_id=f"reddit:{source_id}" if source_id else None,
                 engagement={
                     "score": post.get(
                         "score"
@@ -88,29 +143,10 @@ def reddit_posts_to_trends(
 
     return trends
 
-import requests
 
-
-HN_TOP_STORIES = (
-    "https://hacker-news.firebaseio.com/"
-    "v0/topstories.json"
-)
-
-HN_ITEM = (
-    "https://hacker-news.firebaseio.com/"
-    "v0/item/{item_id}.json"
-)
-
-DEFAULT_REDDIT_SUBREDDITS = [
-    "technology",
-    "artificial",
-    "hardware",
-    "Futurology",
-    "science",
-    "gadgets",
-    "programming",
-    "MachineLearning",
-]
+# =========================================================
+# HACKER NEWS
+# =========================================================
 
 def fetch_hackernews_trends(
     limit: int = 20,
@@ -182,6 +218,7 @@ def fetch_hackernews_trends(
                 url=url,
                 content="",
                 published_at=published_at,
+                source_id=f"hackernews:{story_id}",
                 engagement={
                     "score": item.get(
                         "score"
@@ -200,6 +237,11 @@ def fetch_hackernews_trends(
         )
 
     return trends
+
+
+# =========================================================
+# COLLECT
+# =========================================================
 
 def collect_trends(
     reddit_subreddits: list[str] | None = None,
@@ -265,6 +307,11 @@ def collect_trends(
 
     return trends
 
+
+# =========================================================
+# RANK
+# =========================================================
+
 def rank_trending_topics(
     trends: list[TrendItem],
     count: int = 10,
@@ -305,12 +352,8 @@ Return exactly this structure:
     {{
         "topic": "Specific video topic",
         "reason": "Why this topic has strong content potential",
-        "sources": [
-            {{
-                "source": "reddit or hackernews",
-                "title": "Original trend title",
-                "url": "Original URL"
-            }}
+        "source_ids": [
+            "source_id"
         ]
     }}
 ]
@@ -319,15 +362,18 @@ Rules:
 
 - Return up to {count} topics.
 - Prefer topics with strong curiosity.
-- Prefer surprising, unusual, counterintuitive, controversial, or highly interesting subjects.
-- Prefer topics that can be explained clearly in 30-90 seconds.
+- Prefer surprising, unusual, counterintuitive,
+  controversial, or highly interesting subjects.
+- Prefer topics that can be explained clearly
+  in 30-90 seconds.
 - Every topic MUST be supported by supplied trend data.
+- Every source_id MUST exactly match a supplied trend source_id.
 - Do NOT invent facts.
-- Do NOT invent URLs.
-- Do NOT invent sources.
+- Do NOT invent source_ids.
 - Do NOT combine unrelated trends.
-- A topic may use multiple sources only when those sources clearly concern the same subject.
-- Preserve source titles and URLs exactly.
+- A topic may use multiple source_ids only when
+  those sources clearly concern the same subject.
+- Prefer one source_id when one source is sufficient.
 - Do not use markdown.
 - Do not wrap the JSON in code fences.
 - Do not include anything before or after the JSON.
@@ -341,12 +387,8 @@ Rules:
             "a JSON array."
         )
 
-    valid_sources = {
-        (
-            trend.source,
-            trend.title,
-            trend.url,
-        )
+    trends_by_id = {
+        trend.source_id: trend
         for trend in trends
     }
 
@@ -366,7 +408,7 @@ Rules:
         required_fields = {
             "topic",
             "reason",
-            "sources",
+            "source_ids",
         }
 
         missing = (
@@ -382,71 +424,79 @@ Rules:
             )
 
         if not isinstance(
-            topic["sources"],
+            topic["source_ids"],
             list,
         ):
             raise RuntimeError(
                 f"Trending topic {index} "
-                "'sources' must be a list."
+                "'source_ids' must be a list."
             )
 
-        for source in topic["sources"]:
+        if not topic["source_ids"]:
+            raise RuntimeError(
+                f"Trending topic {index} "
+                "has no source_ids."
+            )
+
+        resolved_sources = []
+        valid_topic = True
+
+        for source_id in topic["source_ids"]:
 
             if not isinstance(
-                source,
-                dict,
+                source_id,
+                str,
             ):
                 raise RuntimeError(
                     f"Trending topic {index} "
-                    "contains an invalid source."
+                    "contains a non-string source_id."
                 )
 
-            required_source_fields = {
-                "source",
-                "title",
-                "url",
-            }
-
-            missing_source_fields = (
-                required_source_fields
-                - source.keys()
+            trend = trends_by_id.get(
+                source_id
             )
 
-            if missing_source_fields:
-                raise RuntimeError(
-                    f"Trending topic {index} "
-                    "source is missing fields: "
-                    + ", ".join(
-                        sorted(
-                            missing_source_fields
-                        )
-                    )
+            if trend is None:
+                print(
+                    f"⚠️ Trending topic {index} "
+                    f"references unknown source_id: "
+                    f"{source_id}. Skipping topic."
                 )
+                valid_topic = False
+                break
 
-            source_key = (
-                source["source"],
-                source["title"],
-                source["url"],
+            resolved_sources.append(
+                trend.to_dict()
             )
 
-            if source_key not in valid_sources:
-                raise RuntimeError(
-                    f"Trending topic {index} "
-                    "references an unknown source."
-                )
+        if not valid_topic:
+            continue
 
-        if not topic["topic"].strip():
+        if not isinstance(
+            topic["topic"],
+            str,
+        ) or not topic["topic"].strip():
             raise RuntimeError(
                 f"Trending topic {index} "
                 "has an empty topic."
             )
 
-        if not topic["reason"].strip():
+        if not isinstance(
+            topic["reason"],
+            str,
+        ) or not topic["reason"].strip():
             raise RuntimeError(
                 f"Trending topic {index} "
                 "has an empty reason."
             )
 
-        validated_topics.append(topic)
+        validated_topics.append(
+            {
+                "topic": topic["topic"].strip(),
+                "reason": topic["reason"].strip(),
+                "source_ids": topic["source_ids"],
+                "sources": resolved_sources,
+            }
+        )
 
     return validated_topics
