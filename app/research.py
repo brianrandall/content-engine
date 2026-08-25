@@ -1003,6 +1003,32 @@ def generate_content(
     content packages using only evidence-backed research claims.
     """
 
+    if count == 1:
+
+        angle_instruction = """
+Create ONE strong short-form video.
+
+Choose the single strongest angle for this topic.
+Prioritize curiosity, surprise, and clear explanation.
+"""
+
+    else:
+
+        angle_instruction = f"""
+Create {count} DISTINCT faceless short-form video content packages.
+
+Each package must approach the topic from a meaningfully different
+angle. Do NOT simply rewrite the same script.
+
+Use these angles where appropriate:
+
+1. SURPRISING / ATTENTION-GRABBING
+2. EXPLAINER
+3. PRACTICAL
+4. RISK / CONTROVERSY
+5. FUTURE / PREDICTION
+"""
+
     prompt = f"""
 You are a short-form content strategist.
 
@@ -1012,19 +1038,7 @@ Topic:
 Evidence-backed research:
 {json.dumps(research, indent=2)}
 
-Create {count} DISTINCT faceless short-form video content packages
-based ONLY on the supplied evidence-backed research.
-
-Each package must approach the topic from a meaningfully different
-angle. Do NOT simply rewrite the same script.
-
-Use these angles:
-
-1. SURPRISING / ATTENTION-GRABBING
-2. EXPLAINER
-3. PRACTICAL
-4. RISK / CONTROVERSY
-5. FUTURE / PREDICTION
+{angle_instruction}
 
 IMPORTANT FACTUAL ACCURACY RULES:
 
@@ -1040,11 +1054,21 @@ IMPORTANT FACTUAL ACCURACY RULES:
 - Treat the supplied research as the complete factual boundary
   for the narration.
 
-Return ONLY valid JSON.
+Return ONLY a JSON array.
 
-The response must be a JSON array containing exactly {count} objects.
+Your entire response MUST begin with `[` and end with `]`.
 
-Each object must use exactly these fields:
+The JSON array MUST contain exactly {count} object(s).
+
+Even when count is 1, you MUST return a JSON array
+containing one object. NEVER return a single JSON object.
+
+Do NOT explain your answer.
+Do NOT output prose.
+Do NOT output a JSON object by itself.
+Do NOT use markdown or code fences.
+
+Each object MUST use exactly these fields:
 
 {{
     "angle": "The strategic angle used for this video.",
@@ -1057,7 +1081,6 @@ Each object must use exactly these fields:
 
 Requirements:
 
-- Every package must be substantially different.
 - Every factual statement in narration must be supported by
   the supplied research.
 - "hook" must be supported by the research if it contains
