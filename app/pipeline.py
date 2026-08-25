@@ -33,11 +33,16 @@ from app.captions import (
 
 from app.final_video import create_final_video
 
-from app.publisher import create_social_manifest
-
+from app.publisher import (
+    create_social_manifest,
+)
 from app.youtube import ( 
     upload_video,
     get_video_stats,
+)
+
+from app.instagram import (
+    publish_reel,
 )
 
 
@@ -752,6 +757,55 @@ def create_content_video(
 
         print(
             "\n⚠️ YouTube upload failed:"
+        )
+
+        print(
+            f"   {type(exc).__name__}: {exc}"
+        )
+
+            # -----------------------------------------------------
+    # INSTAGRAM
+    # -----------------------------------------------------
+
+    try:
+
+        instagram_result = publish_reel(
+            final_video,
+            caption=content["description"],
+        )
+
+        video_manifest["social"]["instagram"].update(
+            {
+                "status": "published",
+                "post_id": instagram_result["media_id"],
+                "url": None,
+                "published_at": None,
+                "error": None,
+            }
+        )
+
+        print(
+            "\n✅ Instagram publish complete:"
+        )
+
+        print(
+            f"   Media ID: "
+            f"{instagram_result['media_id']}"
+        )
+
+    except Exception as exc:
+
+        video_manifest["social"]["instagram"].update(
+            {
+                "status": "failed",
+                "error": (
+                    f"{type(exc).__name__}: {exc}"
+                ),
+            }
+        )
+
+        print(
+            "\n⚠️ Instagram publish failed:"
         )
 
         print(
