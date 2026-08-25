@@ -173,12 +173,19 @@ def create_reel_container(
 
 def wait_for_processing(
     container_id,
-    max_attempts=30,
+    max_attempts=60,
     interval=5,
 ):
+    """
+    Wait for Instagram to finish processing a media container.
+
+    Polls for up to 5 minutes while reporting the actual
+    Instagram processing status.
+    """
 
     for attempt in range(
-        max_attempts
+        1,
+        max_attempts + 1,
     ):
 
         time.sleep(
@@ -204,7 +211,18 @@ def wait_for_processing(
             "status_code"
         )
 
+        status = data.get(
+            "status"
+        )
+
+        print(
+            f"[INSTAGRAM] Processing..."
+            f" ({attempt}/{max_attempts})"
+            f" status={status_code or status}"
+        )
+
         if status_code == "FINISHED":
+
             return data
 
         if status_code in (
@@ -219,7 +237,8 @@ def wait_for_processing(
 
     raise TimeoutError(
         "Instagram media processing "
-        "timed out."
+        f"timed out after "
+        f"{max_attempts * interval} seconds."
     )
 
 
@@ -229,49 +248,118 @@ def wait_for_processing(
 
 def publish_container(
     container_id,
+    max_attempts=3,
+    retry_delay=10,
 ):
+    """
+    Publish an already-processed Instagram container.
+
+    Retries transient connection failures and 5xx
+    responses without creating a new container.
+    """
 
     _validate_config()
 
-    response = requests.post(
-        f"{BASE_URL}/{IG_USER_ID}/media_publish",
-        params={
-            "creation_id": container_id,
-            "access_token": ACCESS_TOKEN,
-        },
-        timeout=60,
-    )
+    for attempt in range(
+        1,
+        max_attempts + 1,
+    ):
 
-    if not response.ok:
-        print()
-        print("=" * 60)
-        print("INSTAGRAM API ERROR")
-        print()
-        print(f"HTTP {response.status_code}")
-        print(response.text)
-        print("=" * 60)
-        print()
+        try:
 
-        raise RuntimeError(
-            f"Instagram API error "
-            f"{response.status_code}: "
-            f"{response.text}"
-        )
+            print(
+                f"[INSTAGRAM] Publishing container "
+                f"{container_id} "
+                f"(attempt {attempt}/{max_attempts})..."
+            )
 
-    data = response.json()
+            response = requests.post(
+                f"{BASE_URL}/{IG_USER_ID}/media_publish",
+                params={
+                    "creation_id": container_id,
+                    "access_token": ACCESS_TOKEN,
+                },
+                timeout=60,
+            )
 
-    media_id = data.get(
-        "id"
-    )
+            # Retry server-side failures.
+            if response.status_code >= 500:
 
-    if not media_id:
+                print(
+                    f"[INSTAGRAM] Server error "
+                    f"{response.status_code}."
+                )
 
-        raise RuntimeError(
-            "Instagram did not return "
-            "a published media ID."
-        )
+                if attempt < max_attempts:
 
-    return media_id
+                    print(
+                        f"[INSTAGRAM] Retrying in "
+                        f"{retry_delay}s..."
+                    )
+
+                    time.sleep(
+                        retry_delay
+                    )
+
+                    continue
+
+                response.raise_for_status()
+
+            if not response.ok:
+
+                print()
+                print("=" * 60)
+                print("INSTAGRAM API ERROR")
+                print()
+                print(
+                    f"HTTP {response.status_code}"
+                )
+                print(response.text)
+                print("=" * 60)
+                print()
+
+                raise RuntimeError(
+                    f"Instagram API error "
+                    f"{response.status_code}: "
+                    f"{response.text}"
+                )
+
+            data = response.json()
+
+            media_id = data.get(
+                "id"
+            )
+
+            if not media_id:
+
+                raise RuntimeError(
+                    "Instagram did not return "
+                    "a published media ID."
+                )
+
+            return media_id
+
+        except (
+            requests.ConnectionError,
+            requests.Timeout,
+        ) as exc:
+
+            print(
+                f"[INSTAGRAM] Transient network "
+                f"error: {exc}"
+            )
+
+            if attempt >= max_attempts:
+                raise
+
+            print(
+                f"[INSTAGRAM] Retrying in "
+                f"{retry_delay}s..."
+            )
+
+            time.sleep(
+                retry_delay
+            )
 
 
 # =========================================================
@@ -281,7 +369,14 @@ def publish_container(
 def publish_reel(
     video_path,
     caption="",
+    container_id=None,
 ):
+    """
+    Publish a Reel.
+
+    If container_id is supplied, reuse the existing
+    Instagram container instead of creating a new one.
+    """
 
     video_url = get_public_video_url(
         video_path
@@ -292,15 +387,32 @@ def publish_reel(
         f"\n{video_url}"
     )
 
-    container_id = create_reel_container(
-        video_url,
-        caption,
-    )
+    # -----------------------------------------------------
+    # CREATE OR REUSE CONTAINER
+    # -----------------------------------------------------
 
-    print(
-        f"[INSTAGRAM] Container created: "
-        f"{container_id}"
-    )
+    if container_id:
+
+        print(
+            f"[INSTAGRAM] Reusing existing "
+            f"container: {container_id}"
+        )
+
+    else:
+
+        container_id = create_reel_container(
+            video_url,
+            caption,
+        )
+
+        print(
+            f"[INSTAGRAM] Container created: "
+            f"{container_id}"
+        )
+
+    # -----------------------------------------------------
+    # WAIT FOR PROCESSING
+    # -----------------------------------------------------
 
     wait_for_processing(
         container_id
@@ -309,6 +421,10 @@ def publish_reel(
     print(
         "[INSTAGRAM] Video processing complete."
     )
+
+    # -----------------------------------------------------
+    # PUBLISH
+    # -----------------------------------------------------
 
     media_id = publish_container(
         container_id
@@ -322,6 +438,7 @@ def publish_reel(
     return {
         "platform": "instagram",
         "media_id": media_id,
+        "container_id": container_id,
         "video_url": video_url,
         "status": "published",
     }

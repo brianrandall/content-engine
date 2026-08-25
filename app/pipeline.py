@@ -35,6 +35,7 @@ from app.final_video import create_final_video
 
 from app.publisher import (
     create_social_manifest,
+    publish_instagram,
 )
 from app.youtube import ( 
     upload_video,
@@ -42,7 +43,10 @@ from app.youtube import (
 )
 
 from app.instagram import (
-    publish_reel,
+    get_public_video_url,
+    create_reel_container,
+    wait_for_processing,
+    publish_container,
 )
 
 
@@ -763,25 +767,14 @@ def create_content_video(
             f"   {type(exc).__name__}: {exc}"
         )
 
-            # -----------------------------------------------------
+        # -----------------------------------------------------
     # INSTAGRAM
     # -----------------------------------------------------
 
     try:
 
-        instagram_result = publish_reel(
-            final_video,
-            caption=content["description"],
-        )
-
-        video_manifest["social"]["instagram"].update(
-            {
-                "status": "published",
-                "post_id": instagram_result["media_id"],
-                "url": None,
-                "published_at": None,
-                "error": None,
-            }
+        instagram_result = publish_instagram(
+            video_dir
         )
 
         print(
@@ -795,21 +788,46 @@ def create_content_video(
 
     except Exception as exc:
 
-        video_manifest["social"]["instagram"].update(
-            {
-                "status": "failed",
-                "error": (
-                    f"{type(exc).__name__}: {exc}"
-                ),
-            }
-        )
-
         print(
             "\n⚠️ Instagram publish failed:"
         )
 
         print(
             f"   {type(exc).__name__}: {exc}"
+        )
+
+    # -----------------------------------------------------
+    # SAVE UPDATED MANIFEST
+    # -----------------------------------------------------
+
+    with open(
+        manifest_path,
+        "w",
+        encoding="utf-8",
+    ) as f:
+
+        json.dump(
+            video_manifest,
+            f,
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    # -----------------------------------------------------
+    # SAVE UPDATED MANIFEST
+    # -----------------------------------------------------
+
+    with open(
+        manifest_path,
+        "w",
+        encoding="utf-8",
+    ) as f:
+
+        json.dump(
+            video_manifest,
+            f,
+            indent=2,
+            ensure_ascii=False,
         )
 
     # -----------------------------------------------------

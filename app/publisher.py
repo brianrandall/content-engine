@@ -3,8 +3,12 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 from app.youtube import upload_video
-
-from app.instagram import publish_reel
+from app.instagram import (
+    get_public_video_url,
+    create_reel_container,
+    wait_for_processing,
+    publish_container,
+)
 
 
 PLATFORMS = [
@@ -23,6 +27,7 @@ def create_social_manifest():
         platform: {
             "status": "pending",
             "post_id": None,
+            "container_id": None,
             "url": None,
             "published_at": None,
             "error": None,
@@ -40,12 +45,23 @@ def create_social_manifest():
 
 
 def load_manifest(path: Path):
-    with open(path, "r", encoding="utf-8") as f:
+    with open(
+        path,
+        "r",
+        encoding="utf-8",
+    ) as f:
         return json.load(f)
 
 
-def save_manifest(path: Path, manifest: dict):
-    with open(path, "w", encoding="utf-8") as f:
+def save_manifest(
+    path: Path,
+    manifest: dict,
+):
+    with open(
+        path,
+        "w",
+        encoding="utf-8",
+    ) as f:
         json.dump(
             manifest,
             f,
@@ -54,18 +70,62 @@ def save_manifest(path: Path, manifest: dict):
         )
 
 
-def initialize_social_manifest(video_dir: Path):
-    manifest_path = video_dir / "manifest.json"
+def initialize_social_manifest(
+    video_dir: Path,
+):
+    manifest_path = (
+        video_dir / "manifest.json"
+    )
 
     if not manifest_path.exists():
         raise RuntimeError(
-            f"Missing video manifest: {manifest_path}"
+            f"Missing video manifest: "
+            f"{manifest_path}"
         )
 
-    manifest = load_manifest(manifest_path)
+    manifest = load_manifest(
+        manifest_path
+    )
+
+    changed = False
 
     if "social" not in manifest:
-        manifest["social"] = create_social_manifest()
+
+        manifest["social"] = (
+            create_social_manifest()
+        )
+
+        changed = True
+
+    else:
+
+        # Upgrade older manifests that don't
+        # have container_id yet.
+
+        for platform in PLATFORMS:
+
+            if platform not in manifest["social"]:
+
+                manifest["social"][platform] = (
+                    create_social_manifest()[
+                        platform
+                    ]
+                )
+
+                changed = True
+
+            elif (
+                "container_id"
+                not in manifest["social"][platform]
+            ):
+
+                manifest["social"][platform][
+                    "container_id"
+                ] = None
+
+                changed = True
+
+    if changed:
 
         save_manifest(
             manifest_path,
@@ -80,6 +140,7 @@ def update_platform_status(
     platform: str,
     status: str,
     post_id=None,
+    container_id=None,
     url=None,
     error=None,
 ):
@@ -88,32 +149,64 @@ def update_platform_status(
             f"Unsupported platform: {platform}"
         )
 
-    manifest_path = video_dir / "manifest.json"
+    manifest_path = (
+        video_dir / "manifest.json"
+    )
 
     manifest = load_manifest(
         manifest_path
     )
 
     if "social" not in manifest:
+
         manifest["social"] = (
             create_social_manifest()
         )
 
-    platform_data = manifest["social"][platform]
+    if platform not in manifest["social"]:
+
+        manifest["social"][platform] = (
+            create_social_manifest()[platform]
+        )
+
+    platform_data = (
+        manifest["social"][platform]
+    )
 
     platform_data["status"] = status
 
     if post_id is not None:
-        platform_data["post_id"] = post_id
+
+        platform_data["post_id"] = (
+            post_id
+        )
+
+    if container_id is not None:
+
+        platform_data["container_id"] = (
+            container_id
+        )
 
     if url is not None:
+
         platform_data["url"] = url
 
     if error is not None:
+
         platform_data["error"] = error
 
+    elif status not in (
+        "failed",
+        "ready_to_publish",
+    ):
+
+        platform_data["error"] = None
+
     if status == "published":
-        platform_data["published_at"] = utc_now()
+
+        platform_data["published_at"] = (
+            utc_now()
+        )
 
     save_manifest(
         manifest_path,
@@ -122,8 +215,13 @@ def update_platform_status(
 
     return manifest
 
-def publish_youtube(video_dir: Path):
-    manifest_path = video_dir / "manifest.json"
+
+def publish_youtube(
+    video_dir: Path,
+):
+    manifest_path = (
+        video_dir / "manifest.json"
+    )
 
     manifest = load_manifest(
         manifest_path
@@ -134,10 +232,14 @@ def publish_youtube(video_dir: Path):
     )
 
     try:
+
         result = upload_video(
             video_path,
             manifest["title"],
-            manifest.get("description", ""),
+            manifest.get(
+                "description",
+                "",
+            ),
         )
 
         update_platform_status(
@@ -156,16 +258,28 @@ def publish_youtube(video_dir: Path):
             video_dir,
             "youtube",
             "failed",
-            error=f"{type(exc).__name__}: {exc}",
+            error=(
+                f"{type(exc).__name__}: "
+                f"{exc}"
+            ),
         )
 
         raise
 
+
 def publish_instagram(video_dir: Path):
+    """
+    Publish an Instagram Reel with checkpointing.
+
+    The Instagram container ID is saved immediately after
+    creation so an interrupted connection can resume without
+    creating a duplicate container.
+    """
+
     manifest_path = video_dir / "manifest.json"
 
-    manifest = load_manifest(
-        manifest_path
+    manifest = initialize_social_manifest(
+        video_dir
     )
 
     video_path = Path(
@@ -177,28 +291,190 @@ def publish_instagram(video_dir: Path):
         "",
     )
 
+    instagram = manifest["social"]["instagram"]
+
+    # -----------------------------------------------------
+    # ALREADY PUBLISHED
+    # -----------------------------------------------------
+
+    if instagram.get("status") == "published":
+        print(
+            "\n⏭️ Instagram already published."
+        )
+
+        return {
+            "platform": "instagram",
+            "media_id": instagram.get(
+                "post_id"
+            ),
+            "video_url": instagram.get(
+                "video_url"
+            ),
+            "status": "published",
+        }
+
     try:
-        result = publish_reel(
-            video_path,
-            caption=caption,
+
+        # -------------------------------------------------
+        # EXISTING CONTAINER
+        # -------------------------------------------------
+
+        container_id = instagram.get(
+            "container_id"
         )
 
-        update_platform_status(
-            video_dir,
-            "instagram",
-            "published",
-            post_id=result["media_id"],
+        if container_id:
+
+            print(
+                "\n[INSTAGRAM] Resuming existing "
+                f"container: {container_id}"
+            )
+
+        # -------------------------------------------------
+        # CREATE NEW CONTAINER
+        # -------------------------------------------------
+
+        else:
+
+            video_url = get_public_video_url(
+                video_path
+            )
+
+            print(
+                "\n[INSTAGRAM] Publishing:"
+                f"\n{video_url}"
+            )
+
+            container_id = create_reel_container(
+                video_url,
+                caption,
+            )
+
+            print(
+                "[INSTAGRAM] Container created: "
+                f"{container_id}"
+            )
+
+            # ---------------------------------------------
+            # CRITICAL CHECKPOINT
+            # ---------------------------------------------
+
+            manifest = load_manifest(
+                manifest_path
+            )
+
+            manifest["social"]["instagram"][
+                "container_id"
+            ] = container_id
+
+            manifest["social"]["instagram"][
+                "status"
+            ] = "processing"
+
+            manifest["social"]["instagram"][
+                "error"
+            ] = None
+
+            save_manifest(
+                manifest_path,
+                manifest,
+            )
+
+            print(
+                "[INSTAGRAM] Container ID "
+                "checkpoint saved."
+            )
+
+        # -------------------------------------------------
+        # WAIT FOR PROCESSING
+        # -------------------------------------------------
+
+        wait_for_processing(
+            container_id
         )
 
-        return result
+        print(
+            "[INSTAGRAM] Video processing complete."
+        )
+
+        # -------------------------------------------------
+        # PUBLISH
+        # -------------------------------------------------
+
+        media_id = publish_container(
+            container_id
+        )
+
+        print(
+            "[INSTAGRAM] Published: "
+            f"{media_id}"
+        )
+
+        # -------------------------------------------------
+        # FINAL CHECKPOINT
+        # -------------------------------------------------
+
+        manifest = load_manifest(
+            manifest_path
+        )
+
+        instagram = manifest[
+            "social"
+        ][
+            "instagram"
+        ]
+
+        instagram["status"] = "published"
+        instagram["post_id"] = media_id
+        instagram["published_at"] = utc_now()
+        instagram["error"] = None
+
+        save_manifest(
+            manifest_path,
+            manifest,
+        )
+
+        return {
+            "platform": "instagram",
+            "media_id": media_id,
+            "video_url": get_public_video_url(
+                video_path
+            ),
+            "status": "published",
+        }
 
     except Exception as exc:
 
-        update_platform_status(
-            video_dir,
-            "instagram",
-            "failed",
-            error=f"{type(exc).__name__}: {exc}",
+        # -------------------------------------------------
+        # PRESERVE CHECKPOINT
+        # -------------------------------------------------
+
+        manifest = load_manifest(
+            manifest_path
+        )
+
+        instagram = manifest[
+            "social"
+        ][
+            "instagram"
+        ]
+
+        instagram["status"] = "failed"
+        instagram["error"] = (
+            f"{type(exc).__name__}: {exc}"
+        )
+
+        save_manifest(
+            manifest_path,
+            manifest,
+        )
+
+        print(
+            "\n⚠️ Instagram publish failed:"
+        )
+
+        print(
+            f"   {type(exc).__name__}: {exc}"
         )
 
         raise
