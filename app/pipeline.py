@@ -808,10 +808,6 @@ def run_pipeline(
     )
 
     print(
-        f"Niche: {niche}"
-    )
-
-    print(
         f"Videos: {content_count}"
     )
 
@@ -819,7 +815,9 @@ def run_pipeline(
     # CREATE RUN
     # -----------------------------------------------------
 
-    run_dir = create_run(niche)
+    run_dir = create_run(
+        "trending-topics"
+    )
 
     print(
         f"\n📁 Production run:"
@@ -830,217 +828,189 @@ def run_pipeline(
     )
 
     # -----------------------------------------------------
-    # TOPIC DISCOVERY
+    # TREND DISCOVERY
     # -----------------------------------------------------
 
     print(
-        "\n🧠 STEP 1 — Discovering topic opportunities..."
+        "\n📡 STEP 1 — Collecting current trends..."
     )
 
-    candidates = discover_topics(
-        niche,
-        count=10,
+    from app.trends import (
+        collect_trends,
+        rank_trending_topics,
     )
 
-    scored_topics = []
+    trends = collect_trends(
+        hackernews_limit=20,
+    )
 
-    for index, candidate in enumerate(
-        candidates,
-        1,
-    ):
-
-        print(
-            f"\n🔎 Evaluating topic "
-            f"{index}/{len(candidates)}: "
-            f"{candidate['topic']}"
-        )
-
-        results = search_web(
-            candidate["search_query"],
-            max_results=5,
-        )
-
-        if not results:
-            print(
-                "   ⚠️ No research results. Skipping."
-            )
-            continue
-
-        research = analyze_research(
-            candidate["topic"],
-            results,
-        )
-
-        score = score_topic(
-            niche,
-            candidate,
-            research,
-        )
-
-        score["research"] = research
-
-        scored_topics.append(
-            score
-        )
-
-        print(
-            f"   ⭐ Score: "
-            f"{score['overall_score']}/10"
-        )
-
-    if not scored_topics:
+    if not trends:
         raise RuntimeError(
-            "No viable topic opportunities found."
+            "No current trends were collected."
         )
 
-    scored_topics.sort(
-        key=lambda item: item["overall_score"],
-        reverse=True,
-    )
-
-    selected_topic = scored_topics[0]
-
-    topic = selected_topic["topic"]
-    research = selected_topic["research"]
-
     print(
-        "\n🏆 SELECTED TOPIC"
+        f"Found {len(trends)} trends."
     )
 
     print(
-        f"   {topic}"
+        "\n🧠 STEP 2 — Ranking trending topics..."
     )
 
-    print(
-        f"   Score: "
-        f"{selected_topic['overall_score']}/10"
+    topics = rank_trending_topics(
+        trends,
+        count=content_count,
     )
 
+    if not topics:
+        raise RuntimeError(
+            "No viable trending topics found."
+        )
+
     print(
-        f"   {selected_topic['reason']}"
+        f"Selected {len(topics)} topics."
     )
+
+    # -----------------------------------------------------
+    # SAVE TREND DATA
+    # -----------------------------------------------------
 
     with open(
-        run_dir / "topic_opportunities.json",
+        run_dir / "trends.json",
         "w",
         encoding="utf-8",
     ) as f:
 
         json.dump(
-            scored_topics,
+            [
+                trend.to_dict()
+                for trend in trends
+            ],
             f,
-            indent=4,
+            indent=2,
             ensure_ascii=False,
         )
 
     with open(
-        run_dir / "selected_topic.json",
+        run_dir / "selected_topics.json",
         "w",
         encoding="utf-8",
     ) as f:
 
         json.dump(
-            selected_topic,
-            f,
-            indent=4,
-            ensure_ascii=False,
-        )
-
-    # -----------------------------------------------------
-    # RESEARCH SELECTED TOPIC
-    # -----------------------------------------------------
-
-    print(
-        "\n🧠 STEP 2 — Researching selected topic..."
-    )
-
-    results = search_web(
-        selected_topic["search_query"]
-    )
-
-    if not results:
-        raise RuntimeError(
-            "No research results found."
-        )
-
-    research = analyze_research(
-        topic,
-        results,
-    )
-
-    with open(
-        run_dir / "research.json",
-        "w",
-        encoding="utf-8",
-    ) as f:
-
-        json.dump(
-            research,
+            topics,
             f,
             indent=2,
             ensure_ascii=False,
         )
 
     # -----------------------------------------------------
-    # CONTENT GENERATION
-    # -----------------------------------------------------
-
-    print(
-        "\n✍️ STEP 3 — Generating "
-        f"{content_count} content packages..."
-    )
-
-    content_packages = generate_content(
-        topic,
-        research,
-        count=content_count,
-    )
-
-    print(
-        f"Generated "
-        f"{len(content_packages)} packages."
-    )
-
-    # Save the exact generated JSON.
-
-    with open(
-        run_dir / "content.json",
-        "w",
-        encoding="utf-8",
-    ) as f:
-
-        json.dump(
-            content_packages,
-            f,
-            indent=4,
-            ensure_ascii=False,
-        )
-
-    # -----------------------------------------------------
-    # GENERATE VIDEOS
+    # PRODUCE ONE VIDEO PER TOPIC
     # -----------------------------------------------------
 
     completed_videos = []
+    video_records = []
 
-    for index, content in enumerate(
-        content_packages,
+    for index, selected_topic in enumerate(
+        topics,
         1,
     ):
 
+        topic = selected_topic["topic"]
+
+        print(
+            "\n"
+            "================================"
+        )
+
+        print(
+            f"🎯 TOPIC {index}/{len(topics)}"
+        )
+
+        print(
+            f"   {topic}"
+        )
+
+        # -------------------------------------------------
+        # RESEARCH
+        # -------------------------------------------------
+
+        print(
+            "\n🔎 Researching topic..."
+        )
+
+        results = search_web(
+            topic,
+            max_results=5,
+        )
+
+        if not results:
+
+            print(
+                "   ⚠️ No research results. "
+                "Skipping topic."
+            )
+
+            continue
+
+        research = analyze_research(
+            topic,
+            results,
+        )
+
+        # -------------------------------------------------
+        # CONTENT GENERATION
+        # -------------------------------------------------
+
+        print(
+            "\n✍️ Generating content package..."
+        )
+
+        content_packages = generate_content(
+            topic,
+            research,
+            count=1,
+        )
+
+        if not content_packages:
+
+            print(
+                "   ⚠️ No content package generated. "
+                "Skipping topic."
+            )
+
+            continue
+
+        content = content_packages[0]
+
+        # -------------------------------------------------
+        # VIDEO GENERATION
+        # -------------------------------------------------
+
         try:
 
-            final_video = (
-                create_content_video(
-                    content,
-                    topic,
-                    research,
-                    run_dir,
-                    index,
-                )
+            final_video = create_content_video(
+                content,
+                topic,
+                research,
+                run_dir,
+                index,
             )
 
             completed_videos.append(
                 final_video
+            )
+
+            video_records.append(
+                {
+                    "index": index,
+                    "topic": topic,
+                    "title": content["title"],
+                    "video_path": str(
+                        final_video
+                    ),
+                    "status": "completed",
+                }
             )
 
         except Exception as exc:
@@ -1050,12 +1020,26 @@ def run_pipeline(
             )
 
             print(
-                f"Video {index}: "
-                f"{content['title']}"
+                f"Topic: {topic}"
             )
 
             print(
-                f"Error: {exc}"
+                f"Error: {type(exc).__name__}: {exc}"
+            )
+
+            video_records.append(
+                {
+                    "index": index,
+                    "topic": topic,
+                    "title": content.get(
+                        "title"
+                    ),
+                    "video_path": None,
+                    "status": "failed",
+                    "error": (
+                        f"{type(exc).__name__}: {exc}"
+                    ),
+                }
             )
 
     # -----------------------------------------------------
@@ -1063,27 +1047,17 @@ def run_pipeline(
     # -----------------------------------------------------
 
     run_manifest = {
-        "niche": niche,
-        "selected_topic": topic,
-        "content_count": content_count,
-        "generated_count": len(content_packages),
+        "mode": "trending_topics",
+        "requested_count": content_count,
+        "selected_count": len(topics),
         "completed_count": len(completed_videos),
-        "topic_opportunities": str(
-            run_dir / "topic_opportunities.json"
+        "trends_path": str(
+            run_dir / "trends.json"
         ),
-        "selected_topic_path": str(
-            run_dir / "selected_topic.json"
+        "selected_topics_path": str(
+            run_dir / "selected_topics.json"
         ),
-        "research_path": str(
-            run_dir / "research.json"
-        ),
-        "content_path": str(
-            run_dir / "content.json"
-        ),
-        "videos": [
-            str(video)
-            for video in completed_videos
-        ],
+        "videos": video_records,
     }
 
     with open(
@@ -1109,7 +1083,7 @@ def run_pipeline(
     )
 
     print(
-        "🔥 PRODUCTION RUN COMPLETE"
+        "🔥 TRENDING PRODUCTION RUN COMPLETE"
     )
 
     print(
@@ -1119,7 +1093,7 @@ def run_pipeline(
     print(
         f"Created: "
         f"{len(completed_videos)}"
-        f"/{len(content_packages)} videos"
+        f"/{len(topics)} videos"
     )
 
     print(
