@@ -13,14 +13,16 @@ from app.research import ask_qwen_json
 # =========================================================
 
 DEFAULT_REDDIT_SUBREDDITS = [
+    "news",
+    "worldnews",
     "technology",
-    "artificial",
-    "hardware",
-    "Futurology",
     "science",
-    "gadgets",
-    "programming",
-    "MachineLearning",
+    "business",
+    "entertainment",
+    "movies",
+    "popculture",
+    "interestingasfuck",
+    "todayilearned",
 ]
 
 HN_TOP_STORIES = (
