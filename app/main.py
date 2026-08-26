@@ -89,7 +89,7 @@ async def run(
 
     /run
         Automatically discover and select
-        a topic from current trends.
+        multiple stories from current trends.
 
     Generated videos are published to Instagram.
     Telegram is used for status notifications only.
@@ -98,6 +98,7 @@ async def run(
     niche = " ".join(
         context.args
     ).strip()
+    selected_topics = None
 
     # -----------------------------------------------------
     # AUTONOMOUS TOPIC DISCOVERY
@@ -128,13 +129,13 @@ async def run(
 
             await update.message.reply_text(
                 f"📡 Found {len(trends)} trends.\n"
-                "Finding the strongest topic..."
+                "🧠 Evaluating opportunities..."
             )
 
             topics = await asyncio.to_thread(
                 rank_trending_topics,
                 trends,
-                5,
+                8,
             )
 
         except Exception as exc:
@@ -155,15 +156,18 @@ async def run(
 
             return
 
-        niche = topics[0][
-            "topic"
-        ]
-
         await update.message.reply_text(
-            "🎯 Topic selected:\n\n"
-            f"{niche}\n\n"
-            "Starting production..."
+            "🎯 Selected "
+            f"{len(topics)} stories:\n\n"
+            + "\n".join(
+                f"{index}. {topic['topic']}\n"
+                f"   Category: {topic['category']}"
+                for index, topic in enumerate(topics, 1)
+            )
+            + "\n\n🎬 Starting production..."
         )
+
+        selected_topics = topics
 
     # -----------------------------------------------------
     # MANUAL TOPIC
@@ -184,10 +188,11 @@ async def run(
 
     try:
 
-        completed_videos = await asyncio.to_thread(
+        run_info = await asyncio.to_thread(
             run_pipeline,
-            niche,
-            5,
+            niche=niche,
+            content_count=8,
+            selected_topics=selected_topics,
         )
 
     except Exception as exc:
@@ -199,20 +204,34 @@ async def run(
 
         return
 
-    if not completed_videos:
+    completed_videos = run_info["completed_videos"]
+    video_records = run_info["video_records"]
 
-        await update.message.reply_text(
-            "❌ Production finished, "
-            "but no videos were created."
+    failed_records = [
+        record
+        for record in video_records
+        if record["status"] == "failed"
+    ]
+    failure_text = ""
+
+    if failed_records:
+        failure_text = "\n\nFailed:\n" + "\n".join(
+            f"- {record['topic']} — {record.get('reason', 'Unknown error')}"
+            for record in failed_records
         )
-
-        return
 
     await update.message.reply_text(
         "🔥 Production complete!\n\n"
-        f"Created {len(completed_videos)}/5 videos.\n\n"
+        f"Selected: {len(run_info['selected_topics'])}\n"
+        f"Completed: {len(completed_videos)}\n"
+        f"Failed: {len(failed_records)}\n"
+        f"Skipped: {sum(record['status'] == 'skipped' for record in video_records)}"
+        f"{failure_text}\n\n"
         "📤 Publishing is delegated to the publisher layer."
     )
+
+    if not completed_videos:
+        return
 
     published = []
     failed = []

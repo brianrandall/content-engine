@@ -542,6 +542,13 @@ DIVERSITY
 
 The final topics must represent genuinely different stories.
 
+Prefer category diversity when opportunities are otherwise
+similarly strong. Five sports stories are acceptable only if
+each is independently strong and materially different. When
+similarly strong opportunities exist across categories, choose
+the more diverse set. Do not select weak stories merely to
+force category coverage, and do not require every category.
+
 Do NOT select:
 
 - multiple topics about the same event
@@ -591,6 +598,9 @@ Rank opportunities using these priorities:
 6. Emotional or human interest
 7. Timeliness
 8. Ability to explain the story clearly in 30-90 seconds
+9. Current momentum
+10. Availability of credible research sources
+11. Likelihood of producing a compelling standalone video
 
 Do NOT prioritize technical sophistication.
 
@@ -600,6 +610,11 @@ Prioritize whether the STORY is interesting.
 
 Prefer timely real-world headline events over generic facts,
 evergreen trivia, or abstract discussions.
+
+Penalize stale news, weak source material, poor video
+potential, stories already covered, and duplicate or
+near-duplicate stories about the same event, person, company,
+team, or other entity.
 
 ---
 
@@ -617,6 +632,7 @@ Assign one broad category:
 - history
 - internet
 - human-interest
+- sports
 - other
 
 ---
@@ -676,6 +692,21 @@ Order the topics from strongest opportunity to weakest.
         )
 
     validated_topics = []
+    allowed_categories = {
+        "science",
+        "technology",
+        "business",
+        "entertainment",
+        "culture",
+        "politics",
+        "world",
+        "history",
+        "internet",
+        "human-interest",
+        "sports",
+        "other",
+    }
+    seen_topics = set()
 
     for index, topic in enumerate(topics, 1):
 
@@ -698,11 +729,12 @@ Order the topics from strongest opportunity to weakest.
         )
 
         if missing:
-            raise RuntimeError(
-                f"Trending topic {index} "
+            print(
+                f"   ⚠️ Trending topic {index} "
                 f"is missing fields: "
-                f"{', '.join(sorted(missing))}"
+                f"{', '.join(sorted(missing))}. Skipping."
             )
+            continue
 
         if not isinstance(topic["topic"], str):
             raise RuntimeError(
@@ -739,6 +771,25 @@ Order the topics from strongest opportunity to weakest.
                 f"Trending topic {index} "
                 "has an empty category."
             )
+
+        category = topic["category"].strip()
+
+        if category not in allowed_categories:
+            print(
+                f"   ⚠️ Trending topic {index} "
+                f"has invalid category: {category}"
+            )
+            continue
+
+        topic_text = topic["topic"].strip()
+        topic_key = topic_text.casefold()
+
+        if topic_key in seen_topics:
+            print(
+                f"   ⚠️ Trending topic {index} "
+                "duplicates an earlier topic."
+            )
+            continue
 
         if not isinstance(topic["source_indices"], list):
             print(
@@ -781,14 +832,24 @@ Order the topics from strongest opportunity to weakest.
         if not valid_topic:
             continue
 
+        if len(set(topic["source_indices"])) != len(
+            topic["source_indices"]
+        ):
+            print(
+                f"   ⚠️ Trending topic {index} "
+                "contains duplicate source_indices."
+            )
+            continue
+
         validated_topics.append(
             {
-                "topic": topic["topic"].strip(),
+                "topic": topic_text,
                 "reason": topic["reason"].strip(),
-                "category": topic["category"].strip(),
+                "category": category,
                 "source_indices": topic["source_indices"],
                 "sources": resolved_sources,
             }
         )
+        seen_topics.add(topic_key)
 
     return validated_topics

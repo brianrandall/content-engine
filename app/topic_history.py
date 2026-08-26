@@ -43,6 +43,9 @@ def _matches_history(
         if not isinstance(entry, dict):
             continue
 
+        if entry.get("status", "completed") != "completed":
+            continue
+
         candidates = [
             entry.get("topic", ""),
             *entry.get("source_titles", []),
@@ -103,6 +106,7 @@ def recent_topics(
 def record_topics(
     topics,
     path: Path = HISTORY_PATH,
+    status: str = "completed",
 ):
     history = load_topic_history(path)
     recorded_at = datetime.now(timezone.utc).isoformat()
@@ -118,6 +122,7 @@ def record_topics(
                     if hasattr(source, "title")
                 ],
                 "recorded_at": recorded_at,
+                "status": status,
             }
         )
 

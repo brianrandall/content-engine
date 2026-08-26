@@ -650,8 +650,9 @@ def create_content_video(
 
 
 def run_pipeline(
-    niche: str,
+    niche: str | None = None,
     content_count: int = 8,
+    selected_topics: list[dict] | None = None,
 ):
 
     print(
@@ -691,36 +692,44 @@ def run_pipeline(
     # TREND DISCOVERY
     # -----------------------------------------------------
 
-    print(
-        "\n📡 STEP 1 — Collecting current trends..."
-    )
-
     from app.trends import (
         collect_trends,
         rank_trending_topics,
     )
 
-    trends = collect_trends(
-        hackernews_limit=20,
-    )
-
-    if not trends:
-        raise RuntimeError(
-            "No current trends were collected."
+    if selected_topics is None:
+        print(
+            "\n📡 STEP 1 — Collecting current trends..."
         )
 
-    print(
-        f"Found {len(trends)} trends."
-    )
+        trends = collect_trends(
+            hackernews_limit=20,
+        )
 
-    print(
-        "\n🧠 STEP 2 — Ranking trending topics..."
-    )
+        if not trends:
+            raise RuntimeError(
+                "No current trends were collected."
+            )
 
-    topics = rank_trending_topics(
-        trends,
-        count=content_count,
-    )
+        print(
+            f"Found {len(trends)} trends."
+        )
+
+        print(
+            "\n🧠 STEP 2 — Ranking trending topics..."
+        )
+
+        topics = rank_trending_topics(
+            trends,
+            count=content_count,
+        )
+    else:
+        topics = selected_topics
+        trends = [
+            source
+            for topic in topics
+            for source in topic.get("sources", [])
+        ]
 
     if not topics:
         raise RuntimeError(
@@ -730,10 +739,6 @@ def run_pipeline(
     print(
         f"Selected {len(topics)} topics."
     )
-
-    from app.topic_history import record_topics
-
-    record_topics(topics)
 
     # -----------------------------------------------------
     # SAVE TREND DATA
@@ -784,6 +789,8 @@ def run_pipeline(
     completed_videos = []
     video_records = []
 
+    from app.topic_history import record_topics
+
     for index, selected_topic in enumerate(
         topics,
         1,
@@ -812,10 +819,18 @@ def run_pipeline(
             "\n🔎 Researching topic..."
         )
 
-        results = search_web(
-            topic,
-            max_results=5,
-        )
+        try:
+            results = search_web(
+                topic,
+                max_results=5,
+            )
+        except Exception as exc:
+            results = []
+            research_error = (
+                f"{type(exc).__name__}: {exc}"
+            )
+        else:
+            research_error = None
 
         if not results:
 
@@ -824,12 +839,40 @@ def run_pipeline(
                 "Skipping topic."
             )
 
+            video_records.append(
+                {
+                    "index": index,
+                    "topic": topic,
+                    "status": "skipped",
+                    "reason": research_error or "No research results.",
+                }
+            )
+            record_topics(
+                [selected_topic],
+                status="failed",
+            )
+
             continue
 
-        research = analyze_research(
-            topic,
-            results,
-        )
+        try:
+            research = analyze_research(
+                topic,
+                results,
+            )
+        except Exception as exc:
+            video_records.append(
+                {
+                    "index": index,
+                    "topic": topic,
+                    "status": "failed",
+                    "reason": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            record_topics(
+                [selected_topic],
+                status="failed",
+            )
+            continue
 
         # -------------------------------------------------
         # CONTENT GENERATION
@@ -839,17 +882,38 @@ def run_pipeline(
             "\n✍️ Generating content package..."
         )
 
-        content_packages = generate_content(
-            topic,
-            research,
-            count=1,
-        )
+        try:
+            content_packages = generate_content(
+                topic,
+                research,
+                count=1,
+            )
+        except Exception as exc:
+            content_packages = []
+            content_error = (
+                f"{type(exc).__name__}: {exc}"
+            )
+        else:
+            content_error = None
 
         if not content_packages:
 
             print(
                 "   ⚠️ No content package generated. "
                 "Skipping topic."
+            )
+
+            video_records.append(
+                {
+                    "index": index,
+                    "topic": topic,
+                    "status": "skipped",
+                    "reason": content_error or "No content package generated.",
+                }
+            )
+            record_topics(
+                [selected_topic],
+                status="failed",
             )
 
             continue
@@ -870,8 +934,18 @@ def run_pipeline(
                 index,
             )
 
+            if not Path(final_video).exists():
+                raise RuntimeError(
+                    "Final video path does not exist."
+                )
+
             completed_videos.append(
                 final_video
+            )
+
+            record_topics(
+                [selected_topic],
+                status="completed",
             )
 
             video_records.append(
@@ -909,10 +983,14 @@ def run_pipeline(
                     ),
                     "video_path": None,
                     "status": "failed",
-                    "error": (
+                    "reason": (
                         f"{type(exc).__name__}: {exc}"
                     ),
                 }
+            )
+            record_topics(
+                [selected_topic],
+                status="failed",
             )
 
     # -----------------------------------------------------
@@ -924,6 +1002,14 @@ def run_pipeline(
         "requested_count": content_count,
         "selected_count": len(topics),
         "completed_count": len(completed_videos),
+        "failed_count": sum(
+            record["status"] == "failed"
+            for record in video_records
+        ),
+        "skipped_count": sum(
+            record["status"] == "skipped"
+            for record in video_records
+        ),
         "trends_path": str(
             run_dir / "trends.json"
         ),
@@ -964,10 +1050,27 @@ def run_pipeline(
     )
 
     print(
-        f"Created: "
-        f"{len(completed_videos)}"
-        f"/{len(topics)} videos"
+        f"Selected: {len(topics)}"
     )
+
+    print(
+        f"Completed: {len(completed_videos)}"
+    )
+
+    print(
+        f"Failed: {run_manifest['failed_count']}"
+    )
+
+    print(
+        f"Skipped: {run_manifest['skipped_count']}"
+    )
+
+    for record in video_records:
+        if record["status"] == "failed":
+            print(
+                f"   ❌ {record['topic']} — "
+                f"{record.get('reason', 'Unknown error')}"
+            )
 
     print(
         f"\n📁 Run directory:"
@@ -983,7 +1086,12 @@ def run_pipeline(
             f"\n🎬 {video}"
         )
 
-    return completed_videos
+    return {
+        "completed_videos": completed_videos,
+        "selected_topics": topics,
+        "video_records": video_records,
+        "run_dir": run_dir,
+    }
 
 
 # =========================================================
