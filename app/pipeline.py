@@ -124,18 +124,29 @@ def normalize_scene_durations(
 # SINGLE VIDEO
 # =========================================================
 
+class PipelineCancelled(Exception):
+    pass
+
 def create_content_video(
     content: dict,
     topic: str,
     research: dict,
     run_dir: Path,
     index: int,
+    cancellation_event=None,
 ):
     """
     Generate one complete video from one content package.
     """
 
     title = content["title"]
+
+    def check_cancelled():
+        if (
+            cancellation_event is not None
+            and cancellation_event.is_set()
+        ):
+            raise PipelineCancelled()
 
     video_dir = create_video_job(
         run_dir,
@@ -219,6 +230,8 @@ def create_content_video(
     # VOICE + CAPTIONS
     # -----------------------------------------------------
 
+    check_cancelled()
+
     if not audio_path.exists():
         print(
             "\n🎙️ Generating narration..."
@@ -233,6 +246,8 @@ def create_content_video(
         )
 
     if not captions_path.exists():
+
+        check_cancelled()
         print(
             "\n📝 Generating captions..."
         )
@@ -271,6 +286,8 @@ def create_content_video(
     # CAPTION FRAMES
     # -----------------------------------------------------
 
+    check_cancelled()
+
     caption_frames_complete = (
         caption_frames_dir
         / ".complete"
@@ -303,6 +320,8 @@ def create_content_video(
     # -----------------------------------------------------
     # VISUAL PLAN
     # -----------------------------------------------------
+
+    check_cancelled()
 
     visual_plan_path = (
         video_dir / "visual_plan.json"
@@ -374,6 +393,8 @@ def create_content_video(
         1,
     ):
 
+        check_cancelled()
+
         image_filename = (
             f"scene_{scene_index:02d}.jpg"
         )
@@ -426,6 +447,8 @@ def create_content_video(
     # NORMALIZE TIMING
     # -----------------------------------------------------
 
+    check_cancelled()
+
     print(
         "\n⏱️ Normalizing visual timing..."
     )
@@ -444,6 +467,8 @@ def create_content_video(
         successful_scenes,
         1,
     ):
+
+        check_cancelled()
 
         print(
             f"   Scene {scene_index}: "
@@ -567,6 +592,8 @@ def create_content_video(
 
     else:
 
+        check_cancelled()
+
         print(
             "\n🎞️ Building visual track..."
         )
@@ -591,6 +618,8 @@ def create_content_video(
             "\n⏭️ Final video already exists."
         )
     else:
+
+        check_cancelled()
 
         print(
             "\n🔥 Creating final video..."
@@ -656,6 +685,7 @@ def run_pipeline(
     mode: str = "publish",
     cancellation_event=None,
     status_callback=None,
+    selection_diagnostics: dict | None = None,
 ):
 
     if mode not in ("publish", "local"):
@@ -720,9 +750,17 @@ def run_pipeline(
             "\n📡 STEP 1 — Collecting current trends..."
         )
 
+        if cancelled():
+            raise PipelineCancelled()
+
         trends = collect_trends(
             hackernews_limit=20,
         )
+
+        if cancelled():
+            raise RuntimeError(
+                "Production cancelled before trend evaluation."
+            )
 
         if not trends:
             raise RuntimeError(
@@ -737,9 +775,17 @@ def run_pipeline(
             "\n🧠 STEP 2 — Ranking trending topics..."
         )
 
+        if cancelled():
+            raise PipelineCancelled()
+
         topics = rank_trending_topics(
             trends,
             count=content_count,
+        )
+        selection_diagnostics = getattr(
+            rank_trending_topics,
+            "last_diagnostics",
+            None,
         )
     else:
         topics = selected_topics
@@ -917,6 +963,18 @@ def run_pipeline(
             )
             continue
 
+        if cancelled():
+            cancelled_topics.append(topic)
+            add_video_record(
+                {
+                    "index": index,
+                    "topic": topic,
+                    "status": "cancelled",
+                    "reason": "Cancellation requested.",
+                }
+            )
+            continue
+
         try:
             research = analyze_research(
                 topic,
@@ -1008,12 +1066,21 @@ def run_pipeline(
 
         try:
 
+            create_video_arguments = {
+                "content": content,
+                "topic": topic,
+                "research": research,
+                "run_dir": run_dir,
+                "index": index,
+            }
+
+            if cancellation_event is not None:
+                create_video_arguments[
+                    "cancellation_event"
+                ] = cancellation_event
+
             final_video = create_content_video(
-                content,
-                topic,
-                research,
-                run_dir,
-                index,
+                **create_video_arguments
             )
 
             if not Path(final_video).exists():
@@ -1041,6 +1108,18 @@ def run_pipeline(
                     "status": "completed",
                 }
             )
+
+        except PipelineCancelled:
+            cancelled_topics.append(topic)
+            add_video_record(
+                {
+                    "index": index,
+                    "topic": topic,
+                    "status": "cancelled",
+                    "reason": "Cancellation requested.",
+                }
+            )
+            continue
 
         except Exception as exc:
 
@@ -1096,6 +1175,7 @@ def run_pipeline(
             run_dir / "selected_topics.json"
         ),
         "videos": video_records,
+        "selection_diagnostics": selection_diagnostics or {},
     }
 
     with open(

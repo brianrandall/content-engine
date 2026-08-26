@@ -347,6 +347,39 @@ def rank_trending_topics(
     concepts rather than simply returning trend titles.
     """
 
+    from app.editorial import evaluate_and_select
+
+    if not trends:
+        rank_trending_topics.last_diagnostics = {
+            "raw_trend_count": 0,
+            "normalized_candidate_count": 0,
+            "evaluated_candidate_count": 0,
+            "category_distribution": {},
+            "evaluations": [],
+        }
+        return []
+
+    from app.topic_history import (
+        filter_covered_trends,
+        load_topic_history,
+    )
+
+    history = load_topic_history()
+    filtered_trends = filter_covered_trends(
+        trends,
+        history,
+    )
+    topics, diagnostics = evaluate_and_select(
+        filtered_trends,
+        count,
+    )
+    diagnostics["raw_trend_count"] = len(trends)
+    diagnostics["covered_trend_count"] = (
+        len(trends) - len(filtered_trends)
+    )
+    rank_trending_topics.last_diagnostics = diagnostics
+    return topics
+
     if not trends:
         return []
 

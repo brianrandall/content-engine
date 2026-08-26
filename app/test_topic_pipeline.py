@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from app import pipeline, trends
 from app import main
+from app.editorial import SCORE_FIELDS
 from app.publisher import ensure_publishing_enabled
 from app.run_state import ProductionRunState
 from app.topic_history import (
@@ -18,6 +19,17 @@ from app.topic_history import (
 
 
 class TopicPipelineTests(unittest.TestCase):
+    def make_evaluation(self, candidate_id, category="world", score=80):
+        evaluation = {
+            "candidate_id": candidate_id,
+            "category": category,
+            "recommended": True,
+            "confidence": 90,
+            "brief_reason": "This is worth covering.",
+        }
+        evaluation.update({field: score for field in SCORE_FIELDS})
+        return evaluation
+
     def make_topic(self, item, topic="Story", category="world"):
         return {
             "topic": topic,
@@ -30,26 +42,16 @@ class TopicPipelineTests(unittest.TestCase):
     def test_rank_skips_invalid_indices_and_allows_fewer_topics(self):
         items = [trends.TrendItem("news", "A"), trends.TrendItem("news", "B")]
         response = [
-            self.make_topic(items[0], "Valid one"),
-            {
-                "topic": "Invalid one",
-                "reason": "Reason",
-                "category": "world",
-                "source_indices": [99],
-            },
-            {
-                "topic": "Malformed one",
-                "reason": "Reason",
-                "category": "world",
-                "source_indices": [[0]],
-            },
+            self.make_evaluation(0),
+            self.make_evaluation(1),
+            {**self.make_evaluation(0), "candidate_id": 99, "timeliness": "bad"},
         ]
 
         with patch("app.topic_history.load_topic_history", return_value=[]), \
-             patch("app.trends.ask_qwen_json", return_value=response):
+             patch("app.editorial.ask_qwen_json", return_value=response):
             result = trends.rank_trending_topics(items, count=5)
 
-        self.assertEqual([topic["topic"] for topic in result], ["Valid one"])
+        self.assertEqual([topic["topic"] for topic in result], ["A", "B"])
         self.assertIs(result[0]["sources"][0], items[0])
 
     def test_rank_defaults_to_eight_topics(self):
@@ -62,36 +64,30 @@ class TopicPipelineTests(unittest.TestCase):
     def test_rank_skips_missing_fields(self):
         item = trends.TrendItem("news", "A")
         response = [
-            {"topic": "Malformed"},
-            self.make_topic(item, "Valid"),
+            {"candidate_id": 0},
+            self.make_evaluation(0),
         ]
 
         with patch("app.topic_history.load_topic_history", return_value=[]), \
-             patch("app.trends.ask_qwen_json", return_value=response):
+             patch("app.editorial.ask_qwen_json", return_value=response):
             result = trends.rank_trending_topics([item], count=8)
 
-        self.assertEqual([topic["topic"] for topic in result], ["Valid"])
+        self.assertEqual([topic["topic"] for topic in result], ["A"])
 
     def test_rank_rejects_duplicates_and_includes_category_guidance(self):
         item = trends.TrendItem("news", "A")
         response = [
-            self.make_topic(item, "Same story", "sports"),
-            self.make_topic(item, "Same story", "world"),
-            {
-                "topic": "Bad category",
-                "reason": "Reason",
-                "category": "food",
-                "source_indices": [0],
-            },
+            self.make_evaluation(0, "sports"),
+            {**self.make_evaluation(0), "category": "food"},
         ]
 
         with patch("app.topic_history.load_topic_history", return_value=[]), \
-             patch("app.trends.ask_qwen_json", return_value=response) as ask:
+             patch("app.editorial.ask_qwen_json", return_value=response) as ask:
             result = trends.rank_trending_topics([item], count=5)
 
         prompt = ask.call_args.args[0]
         self.assertIn("sports", prompt)
-        self.assertIn("Five sports stories are acceptable only if", prompt)
+        self.assertIn("Evaluate every supplied candidate independently", prompt)
         self.assertEqual(len(result), 1)
 
     def test_history_only_excludes_completed_topics(self):
@@ -154,10 +150,10 @@ class TopicPipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory)
 
-            def render(content, topic, research, target, index):
+            def render(content, topic, research, run_dir, index):
                 if topic == "First":
                     raise RuntimeError("render failed")
-                output = target / "final_short.mp4"
+                output = run_dir / "final_short.mp4"
                 output.touch()
                 return output
 
@@ -310,6 +306,7 @@ class TopicPipelineTests(unittest.TestCase):
             status_callback=run_pipeline.call_args.kwargs[
                 "status_callback"
             ],
+            selection_diagnostics={},
         )
         selection_message = next(
             message

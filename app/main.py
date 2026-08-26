@@ -106,6 +106,7 @@ async def _run(
         context.args
     ).strip()
     selected_topics = None
+    selection_diagnostics = {}
 
     run_state.update(current_topic=None)
 
@@ -155,8 +156,25 @@ async def _run(
                 trends,
                 8,
             )
+            selection_diagnostics = getattr(
+                rank_trending_topics,
+                "last_diagnostics",
+                {},
+            )
+            if not isinstance(selection_diagnostics, dict):
+                selection_diagnostics = {}
 
         except Exception as exc:
+
+            if run_state.cancel_event.is_set():
+                await update.message.reply_text(
+                    "🛑 RUN STOPPED\n\n"
+                    "Completed: 0\n"
+                    "Failed: 0\n"
+                    "Cancelled: 0\n"
+                    "Skipped: 0"
+                )
+                return
 
             await update.message.reply_text(
                 "❌ Trend discovery failed.\n\n"
@@ -179,7 +197,8 @@ async def _run(
             f"{len(topics)} stories:\n\n"
             + "\n".join(
                 f"{index}. {topic['topic']}\n"
-                f"   Category: {topic['category']}"
+                f"   Category: {topic['category']}\n"
+                f"   Score: {topic.get('adjusted_score', 'n/a')}"
                 for index, topic in enumerate(topics, 1)
             )
             + "\n\n🎬 Starting production..."
@@ -196,7 +215,7 @@ async def _run(
         await update.message.reply_text(
             "🚀 Starting production run...\n\n"
             f"Topic: {niche}\n"
-            "Videos: 5\n\n"
+            "Videos: 8\n\n"
             "Using manually supplied topic."
         )
 
@@ -214,6 +233,7 @@ async def _run(
             mode=mode,
             cancellation_event=run_state.cancel_event,
             status_callback=run_state.update,
+            selection_diagnostics=selection_diagnostics,
         )
 
     except Exception as exc:
@@ -263,7 +283,7 @@ async def _run(
         for record in video_records
     )
     summary_title = (
-        "🛑 Production stopped!"
+        "🛑 RUN STOPPED"
         if cancelled_count
         else (
             "🧪 LOCAL RUN COMPLETE"
@@ -289,7 +309,7 @@ async def _run(
         f"{summary_suffix}"
     )
 
-    if mode == "local":
+    if mode == "local" or run_state.cancel_event.is_set():
         return
 
     if not completed_videos:
@@ -302,6 +322,9 @@ async def _run(
         completed_videos,
         1,
     ):
+
+        if run_state.cancel_event.is_set():
+            return
 
         video_file = Path(video_path)
         video_dir = video_file.parent
