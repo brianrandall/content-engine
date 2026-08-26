@@ -242,56 +242,42 @@ def validate_evaluations(raw_evaluations, candidates):
 
 
 def build_editorial_slate(evaluations, count=MAX_VIDEOS):
-    remaining = sorted(
-        evaluations,
-        key=lambda evaluation: (
-            -evaluation["opportunity_score"],
-            evaluation["candidate"]["candidate_id"],
-        ),
-    )
+    remaining = list(evaluations)
     selected = []
     category_counts = {}
 
-    while remaining and len(selected) < min(count, MAX_VIDEOS):
-        best_index = 0
-        best_adjusted_score = None
+    while remaining and len(selected) < count:
+        unused = [
+            e for e in remaining
+            if category_counts.get(e["category"], 0) == 0
+        ]
 
-        if selected:
-            unused_categories = {
-                evaluation["category"]
-                for evaluation in remaining
-                if evaluation["category"] not in category_counts
-            }
-
-            if unused_categories:
-                eligible_indices = [
-                    index
-                    for index, evaluation in enumerate(remaining)
-                    if evaluation["category"] in unused_categories
-                ]
-            else:
-                eligible_indices = [
-                    index
-                    for index, evaluation in enumerate(remaining)
-                    if category_counts.get(evaluation["category"], 0) < 2
-                ]
-
-                if not eligible_indices:
-                    eligible_indices = list(range(len(remaining)))
+        if unused:
+            pool = unused
         else:
-            eligible_indices = list(range(len(remaining)))
+            eligible = [
+                e for e in remaining
+                if category_counts.get(e["category"], 0) < 2
+            ]
 
-        for index in eligible_indices:
-            evaluation = remaining[index]
+            pool = eligible if eligible else remaining
+
+        best_index = None
+        best_score = None
+
+        for index, evaluation in enumerate(pool):
             category = evaluation["category"]
             occurrence = category_counts.get(category, 0)
-            penalty = CATEGORY_REPETITION_PENALTIES[min(
-                occurrence,
-                len(CATEGORY_REPETITION_PENALTIES) - 1,
-            )]
-            recommendation_bonus = _recommendation_bonus(
-                evaluation
-            )
+
+            penalty = CATEGORY_REPETITION_PENALTIES[
+                min(
+                    occurrence,
+                    len(CATEGORY_REPETITION_PENALTIES) - 1,
+                )
+            ]
+
+            recommendation_bonus = _recommendation_bonus(evaluation)
+
             adjusted_score = round(
                 evaluation["opportunity_score"]
                 + recommendation_bonus
@@ -300,21 +286,27 @@ def build_editorial_slate(evaluations, count=MAX_VIDEOS):
             )
 
             if (
-                best_adjusted_score is None
-                or adjusted_score > best_adjusted_score
+                best_score is None
+                or adjusted_score > best_score
                 or (
-                    adjusted_score == best_adjusted_score
+                    adjusted_score == best_score
                     and evaluation["candidate"]["candidate_id"]
-                    < remaining[best_index]["candidate"]["candidate_id"]
+                    < pool[best_index]["candidate"]["candidate_id"]
                 )
             ):
                 best_index = index
-                best_adjusted_score = adjusted_score
+                best_score = adjusted_score
 
-        evaluation = remaining.pop(best_index)
+        evaluation = pool[best_index]
+        remaining.remove(evaluation)
+
         category = evaluation["category"]
-        category_counts[category] = category_counts.get(category, 0) + 1
+        category_counts[category] = (
+            category_counts.get(category, 0) + 1
+        )
+
         candidate = evaluation["candidate"]
+
         selected.append(
             {
                 "topic": candidate["title"],
@@ -326,7 +318,7 @@ def build_editorial_slate(evaluations, count=MAX_VIDEOS):
                 "recommendation_bonus": _recommendation_bonus(
                     evaluation
                 ),
-                "adjusted_score": best_adjusted_score,
+                "adjusted_score": best_score,
                 "selection_rationale": (
                     "Selected by weighted editorial score with "
                     f"{category_counts[category] - 1} prior "

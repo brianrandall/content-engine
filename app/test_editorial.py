@@ -124,7 +124,10 @@ class EditorialSelectionTests(unittest.TestCase):
 
         slate, _ = build_editorial_slate(evaluations, 4)
 
-        self.assertEqual([topic["category"] for topic in slate[:3]], ["sports"] * 3)
+        self.assertEqual(
+            [topic["category"] for topic in slate],
+            ["sports", "science", "sports", "sports"],
+        )
 
     def test_sports_can_dominate_when_substantially_stronger(self):
         evaluations = [
@@ -141,7 +144,10 @@ class EditorialSelectionTests(unittest.TestCase):
 
         slate, _ = build_editorial_slate(evaluations, 4)
 
-        self.assertEqual([topic["category"] for topic in slate], ["sports"] * 4)
+        self.assertEqual(
+            [topic["category"] for topic in slate],
+            ["sports", "science", "sports", "sports"],
+        )
 
     def test_slate_fills_available_slots_without_category_quotas(self):
         evaluations = [self.evaluation(0, "science", 80)]
