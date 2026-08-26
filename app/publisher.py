@@ -18,6 +18,13 @@ PLATFORMS = [
 ]
 
 
+def ensure_publishing_enabled(mode: str = "publish"):
+    if mode == "local":
+        raise RuntimeError(
+            "Publishing is disabled in local mode."
+        )
+
+
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -216,7 +223,11 @@ def update_platform_status(
     return manifest
 
 
-def publish_youtube(video_dir: Path):
+def publish_youtube(
+    video_dir: Path,
+    mode: str = "publish",
+):
+    ensure_publishing_enabled(mode)
     manifest_path = video_dir / "manifest.json"
 
     manifest = load_manifest(
@@ -303,7 +314,10 @@ def publish_youtube(video_dir: Path):
         raise
 
 
-def publish_instagram(video_dir: Path):
+def publish_instagram(
+    video_dir: Path,
+    mode: str = "publish",
+):
     """
     Publish an Instagram Reel with checkpointing.
 
@@ -311,6 +325,8 @@ def publish_instagram(video_dir: Path):
     creation so an interrupted connection can resume without
     creating a duplicate container.
     """
+
+    ensure_publishing_enabled(mode)
 
     manifest_path = video_dir / "manifest.json"
 

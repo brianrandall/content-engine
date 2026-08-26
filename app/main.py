@@ -1,8 +1,10 @@
 import os
 import asyncio
+import threading
 from pathlib import Path
 
 from dotenv import load_dotenv
+from app.run_state import ProductionRunState
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -72,14 +74,19 @@ TOKEN = os.getenv(
 
 MODEL = "qwen3:8b"
 
+ACTIVE_RUN = None
+ACTIVE_RUN_LOCK = threading.Lock()
+
 
 # =========================================================
 # PRODUCTION RUN
 # =========================================================
 
-async def run(
+async def _run(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
+    mode: str,
+    run_state: ProductionRunState,
 ):
     """
     Run the content production pipeline.
@@ -100,15 +107,25 @@ async def run(
     ).strip()
     selected_topics = None
 
+    run_state.update(current_topic=None)
+
     # -----------------------------------------------------
     # AUTONOMOUS TOPIC DISCOVERY
     # -----------------------------------------------------
 
     if not niche:
 
+        opening = (
+            "🧪 LOCAL TEST RUN\n\n"
+            "⚠️ Publishing is DISABLED.\n\n"
+            "📡 Scanning current trends..."
+            if mode == "local"
+            else "🔥 Autonomous run\n\n"
+            "📡 Scanning current trends..."
+        )
+
         await update.message.reply_text(
-            "🔥 No topic supplied.\n\n"
-            "Scanning current trends..."
+            opening
         )
 
         try:
@@ -127,6 +144,7 @@ async def run(
 
                 return
 
+            run_state.update(selected=0)
             await update.message.reply_text(
                 f"📡 Found {len(trends)} trends.\n"
                 "🧠 Evaluating opportunities..."
@@ -193,6 +211,9 @@ async def run(
             niche=niche,
             content_count=8,
             selected_topics=selected_topics,
+            mode=mode,
+            cancellation_event=run_state.cancel_event,
+            status_callback=run_state.update,
         )
 
     except Exception as exc:
@@ -206,6 +227,23 @@ async def run(
 
     completed_videos = run_info["completed_videos"]
     video_records = run_info["video_records"]
+    run_state.update(
+        selected=len(run_info["selected_topics"]),
+        completed=len(completed_videos),
+        failed=sum(
+            record["status"] == "failed"
+            for record in video_records
+        ),
+        skipped=sum(
+            record["status"] == "skipped"
+            for record in video_records
+        ),
+        cancelled=sum(
+            record["status"] == "cancelled"
+            for record in video_records
+        ),
+        current_topic=None,
+    )
 
     failed_records = [
         record
@@ -220,15 +258,39 @@ async def run(
             for record in failed_records
         )
 
+    cancelled_count = sum(
+        record["status"] == "cancelled"
+        for record in video_records
+    )
+    summary_title = (
+        "🛑 Production stopped!"
+        if cancelled_count
+        else (
+            "🧪 LOCAL RUN COMPLETE"
+            if mode == "local"
+            else "🔥 Production complete!"
+        )
+    )
+    summary_suffix = (
+        "\n\n📁 Videos saved locally.\n"
+        "🚫 Nothing was published."
+        if mode == "local"
+        else "\n\n📤 Publishing is delegated to the publisher layer."
+    )
+
     await update.message.reply_text(
-        "🔥 Production complete!\n\n"
+        f"{summary_title}\n\n"
         f"Selected: {len(run_info['selected_topics'])}\n"
         f"Completed: {len(completed_videos)}\n"
         f"Failed: {len(failed_records)}\n"
+        f"Cancelled: {cancelled_count}\n"
         f"Skipped: {sum(record['status'] == 'skipped' for record in video_records)}"
         f"{failure_text}\n\n"
-        "📤 Publishing is delegated to the publisher layer."
+        f"{summary_suffix}"
     )
+
+    if mode == "local":
+        return
 
     if not completed_videos:
         return
@@ -325,7 +387,8 @@ async def run(
     message = (
         "🏁 RUN COMPLETE\n\n"
         f"Topic: {niche}\n"
-        f"Videos generated: {len(completed_videos)}/5\n"
+        f"Videos generated: {len(completed_videos)}/"
+        f"{len(run_info['selected_topics'])}\n"
         f"Videos with at least one successful publish: {len(published)}\n"
         f"Publish failures: {len(failed)}"
     )
@@ -349,6 +412,87 @@ async def run(
             message += f"• Video {item['index']} ({item['platform']}): {item['error']}\n"
 
     await update.message.reply_text(message)
+
+
+async def _start_run(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    mode: str,
+):
+    global ACTIVE_RUN
+
+    with ACTIVE_RUN_LOCK:
+        if ACTIVE_RUN is not None:
+            await update.message.reply_text(
+                "⚠️ A production run is already active.\n\n"
+                "Use /stop to cancel it or wait for it to finish."
+            )
+            return
+
+        ACTIVE_RUN = ProductionRunState(mode=mode)
+        run_state = ACTIVE_RUN
+
+    try:
+        return await _run(
+            update,
+            context,
+            mode,
+            run_state,
+        )
+    finally:
+        run_state.update(
+            status="idle",
+            current_topic=None,
+        )
+        with ACTIVE_RUN_LOCK:
+            if ACTIVE_RUN is run_state:
+                ACTIVE_RUN = None
+
+
+async def run(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    return await _start_run(
+        update,
+        context,
+        "publish",
+    )
+
+
+async def run_local(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    return await _start_run(
+        update,
+        context,
+        "local",
+    )
+
+
+async def stop(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    with ACTIVE_RUN_LOCK:
+        run_state = ACTIVE_RUN
+
+    if run_state is None:
+        await update.message.reply_text(
+            "ℹ️ No production run is currently active."
+        )
+        return
+
+    if run_state.request_stop():
+        await update.message.reply_text(
+            "🛑 Production stop requested.\n\n"
+            "The current operation will finish, then the run will stop."
+        )
+    else:
+        await update.message.reply_text(
+            "🛑 Production is already stopping."
+        )
 
 
 # =========================================================
@@ -413,9 +557,29 @@ async def status(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
+    with ACTIVE_RUN_LOCK:
+        run_state = ACTIVE_RUN
+
+    if run_state is not None:
+        snapshot = run_state.snapshot()
+        mode = snapshot["mode"].upper()
+        current = snapshot["current_topic"] or "Between topics"
+        await update.message.reply_text(
+            "🤖 Content Engine\n\n"
+            f"Status: {snapshot['status'].upper()}\n"
+            f"Mode: {mode}\n"
+            f"Selected: {snapshot['selected']}\n"
+            f"Completed: {snapshot['completed']}\n"
+            f"Failed: {snapshot['failed']}\n"
+            f"Cancelled: {snapshot['cancelled']}\n"
+            f"Skipped: {snapshot['skipped']}\n"
+            f"Current topic: {current}"
+        )
+        return
+
     await update.message.reply_text(
         "🤖 Content Engine\n\n"
-        "Status: ONLINE\n"
+        "Status: IDLE\n"
         "LLM: Ollama (local)\n"
         f"Model: {MODEL}\n"
         "Instagram: ENABLED"
@@ -584,6 +748,20 @@ def main():
         CommandHandler(
             "run",
             run,
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "runlocal",
+            run_local,
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "stop",
+            stop,
         )
     )
 

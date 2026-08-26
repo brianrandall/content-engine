@@ -8,6 +8,31 @@ LOG_DIR="$PROJECT_DIR/logs"
 MEDIA_LOG="$LOG_DIR/media_server.log"
 TELEGRAM_LOG="$LOG_DIR/telegram_bot.log"
 
+process_pids() {
+    ps -axo pid=,command= | awk -v module="$1" '
+        {
+            for (field = 2; field < NF; field++) {
+                if ($field == "-m" && $(field + 1) == module) {
+                    print $1
+                }
+            }
+        }
+    '
+}
+
+wait_for_process() {
+    local pid="$1"
+
+    for attempt in {1..20}; do
+        if kill -0 "$pid" 2>/dev/null; then
+            return 0
+        fi
+        sleep 1
+    done
+
+    return 1
+}
+
 mkdir -p "$LOG_DIR"
 
 cd "$PROJECT_DIR" || exit 1
@@ -57,9 +82,18 @@ echo ""
 
 echo "📡 Checking media server..."
 
-MEDIA_PID=$(lsof -tiTCP:${MEDIA_PORT} -sTCP:LISTEN 2>/dev/null | head -1)
+MEDIA_PIDS=$(process_pids "app.media_server")
+MEDIA_COUNT=$(printf '%s\n' "$MEDIA_PIDS" | sed '/^$/d' | wc -l | tr -d ' ')
 
-if [ -n "$MEDIA_PID" ]; then
+if [ "$MEDIA_COUNT" -gt 1 ]; then
+
+    echo "❌ Multiple content-engine media servers detected:"
+    printf '   PID %s\n' $MEDIA_PIDS
+    exit 1
+
+elif [ "$MEDIA_COUNT" -eq 1 ]; then
+
+    MEDIA_PID="$MEDIA_PIDS"
 
     echo "✅ Media server already running."
     echo "   PID: $MEDIA_PID"
@@ -73,9 +107,7 @@ else
 
     MEDIA_PID=$!
 
-    sleep 2
-
-    if kill -0 "$MEDIA_PID" 2>/dev/null; then
+    if wait_for_process "$MEDIA_PID"; then
         echo "✅ Media server started."
         echo "   PID: $MEDIA_PID"
     else
@@ -96,9 +128,19 @@ echo ""
 
 echo "🤖 Checking Telegram bot..."
 
-TELEGRAM_PID=$(pgrep -f "$VENV/bin/python3 -m app.telegram_bot" | head -1)
+TELEGRAM_PIDS=$(process_pids "app.telegram_bot")
+TELEGRAM_COUNT=$(printf '%s\n' "$TELEGRAM_PIDS" | sed '/^$/d' | wc -l | tr -d ' ')
 
-if [ -n "$TELEGRAM_PID" ]; then
+if [ "$TELEGRAM_COUNT" -gt 1 ]; then
+
+    echo "❌ Multiple Telegram bot instances detected:"
+    printf '   PID %s\n' $TELEGRAM_PIDS
+    echo "   Stop the duplicates manually before rerunning ./run.sh."
+    exit 1
+
+elif [ "$TELEGRAM_COUNT" -eq 1 ]; then
+
+    TELEGRAM_PID="$TELEGRAM_PIDS"
 
     echo "✅ Telegram bot already running."
     echo "   PID: $TELEGRAM_PID"
@@ -112,9 +154,7 @@ else
 
     TELEGRAM_PID=$!
 
-    sleep 2
-
-    if kill -0 "$TELEGRAM_PID" 2>/dev/null; then
+    if wait_for_process "$TELEGRAM_PID"; then
         echo "✅ Telegram bot started."
         echo "   PID: $TELEGRAM_PID"
     else

@@ -11,15 +11,27 @@ VIDEO_PATH = Path(
 )
 
 
-result = upload_video(
-    video_path=VIDEO_PATH,
-    title="TEST — The 1923 Story Behind Haunted Dolls",
-    description="Private test upload from Content Engine.",
-)
+def run_live_test():
+    import os
 
-print()
-print("================================")
-print("YOUTUBE UPLOAD SUCCESS")
-print("================================")
-print(f"Video ID: {result['post_id']}")
-print(f"URL:      {result['url']}")
+    if os.getenv("CONTENT_ENGINE_LIVE_TESTS") != "1":
+        raise RuntimeError(
+            "Set CONTENT_ENGINE_LIVE_TESTS=1 to run live publishing tests."
+        )
+
+    result = upload_video(
+        video_path=VIDEO_PATH,
+        title="TEST — The 1923 Story Behind Haunted Dolls",
+        description="Private test upload from Content Engine.",
+    )
+
+    print()
+    print("================================")
+    print("YOUTUBE UPLOAD SUCCESS")
+    print("================================")
+    print(f"Video ID: {result['post_id']}")
+    print(f"URL:      {result['url']}")
+
+
+if __name__ == "__main__":
+    run_live_test()

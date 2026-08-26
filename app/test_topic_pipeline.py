@@ -1,6 +1,7 @@
 import json
 import asyncio
 import inspect
+import threading
 from pathlib import Path
 import tempfile
 import unittest
@@ -8,6 +9,8 @@ from unittest.mock import patch
 
 from app import pipeline, trends
 from app import main
+from app.publisher import ensure_publishing_enabled
+from app.run_state import ProductionRunState
 from app.topic_history import (
     filter_covered_trends,
     record_topics,
@@ -180,6 +183,85 @@ class TopicPipelineTests(unittest.TestCase):
         self.assertEqual(result["video_records"][0]["status"], "failed")
         self.assertEqual(result["video_records"][1]["status"], "completed")
 
+    def test_cancellation_marks_remaining_topics_cancelled(self):
+        first = trends.TrendItem("news", "First")
+        second = trends.TrendItem("news", "Second")
+        selected = [
+            self.make_topic(first, "First"),
+            self.make_topic(second, "Second"),
+        ]
+        cancel_event = threading.Event()
+        cancel_event.set()
+
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            with patch.object(pipeline, "create_run", return_value=run_dir):
+                result = pipeline.run_pipeline(
+                    content_count=2,
+                    selected_topics=selected,
+                    cancellation_event=cancel_event,
+                )
+
+        self.assertEqual(len(result["completed_videos"]), 0)
+        self.assertEqual(
+            [record["status"] for record in result["video_records"]],
+            ["cancelled", "cancelled"],
+        )
+
+    def test_local_mode_publishing_is_rejected(self):
+        with self.assertRaises(RuntimeError):
+            ensure_publishing_enabled("local")
+
+    def test_runlocal_does_not_call_publishers(self):
+        item = trends.TrendItem("news", "Local")
+        selected = [self.make_topic(item, "Local")]
+        video_path = Path(tempfile.gettempdir()) / "local-test.mp4"
+        video_path.touch()
+        run_info = {
+            "completed_videos": [video_path],
+            "selected_topics": selected,
+            "video_records": [{"status": "completed", "topic": "Local"}],
+        }
+
+        class Message:
+            def __init__(self):
+                self.messages = []
+
+            async def reply_text(self, text):
+                self.messages.append(text)
+
+        class Update:
+            def __init__(self):
+                self.message = Message()
+
+        class Context:
+            args = []
+
+        async def run_test():
+            with patch.object(main, "collect_trends", return_value=[item]), \
+                 patch.object(main, "rank_trending_topics", return_value=selected), \
+                 patch.object(main, "run_pipeline", return_value=run_info), \
+                 patch.object(main, "publish_youtube") as youtube, \
+                 patch.object(main, "publish_instagram") as instagram:
+                update = Update()
+                await main.run_local(update, Context())
+                return update, youtube, instagram
+
+        update, youtube, instagram = asyncio.run(run_test())
+        youtube.assert_not_called()
+        instagram.assert_not_called()
+        self.assertTrue(
+            any("Nothing was published" in message
+                for message in update.message.messages)
+        )
+
+    def test_run_state_stop_and_snapshot(self):
+        state = ProductionRunState(mode="local")
+        self.assertTrue(state.request_stop())
+        snapshot = state.snapshot()
+        self.assertEqual(snapshot["status"], "stopping")
+        self.assertTrue(state.cancel_event.is_set())
+
     def test_telegram_displays_the_topics_passed_to_pipeline(self):
         item = trends.TrendItem("news", "Selected source")
         selected = [
@@ -221,6 +303,13 @@ class TopicPipelineTests(unittest.TestCase):
             niche="",
             content_count=8,
             selected_topics=selected,
+            mode="publish",
+            cancellation_event=run_pipeline.call_args.kwargs[
+                "cancellation_event"
+            ],
+            status_callback=run_pipeline.call_args.kwargs[
+                "status_callback"
+            ],
         )
         selection_message = next(
             message
@@ -229,6 +318,53 @@ class TopicPipelineTests(unittest.TestCase):
         )
         self.assertIn("First selected", selection_message)
         self.assertIn("Second selected", selection_message)
+
+    def test_stop_when_idle_reports_no_active_run(self):
+        class Message:
+            def __init__(self):
+                self.messages = []
+
+            async def reply_text(self, text):
+                self.messages.append(text)
+
+        class Update:
+            def __init__(self):
+                self.message = Message()
+
+        update = Update()
+        asyncio.run(main.stop(update, object()))
+        self.assertEqual(
+            update.message.messages,
+            ["ℹ️ No production run is currently active."],
+        )
+
+    def test_second_run_is_rejected_while_active(self):
+        class Message:
+            def __init__(self):
+                self.messages = []
+
+            async def reply_text(self, text):
+                self.messages.append(text)
+
+        class Update:
+            def __init__(self):
+                self.message = Message()
+
+        class Context:
+            args = []
+
+        previous = main.ACTIVE_RUN
+        main.ACTIVE_RUN = ProductionRunState(mode="publish")
+        try:
+            update = Update()
+            asyncio.run(main.run(update, Context()))
+        finally:
+            main.ACTIVE_RUN = previous
+
+        self.assertIn(
+            "A production run is already active.",
+            update.message.messages[0],
+        )
 
 
 if __name__ == "__main__":

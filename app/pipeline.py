@@ -653,7 +653,25 @@ def run_pipeline(
     niche: str | None = None,
     content_count: int = 8,
     selected_topics: list[dict] | None = None,
+    mode: str = "publish",
+    cancellation_event=None,
+    status_callback=None,
 ):
+
+    if mode not in ("publish", "local"):
+        raise ValueError(
+            "mode must be 'publish' or 'local'."
+        )
+
+    def cancelled():
+        return (
+            cancellation_event is not None
+            and cancellation_event.is_set()
+        )
+
+    def update_status(**changes):
+        if status_callback is not None:
+            status_callback(**changes)
 
     print(
         "\n"
@@ -788,8 +806,30 @@ def run_pipeline(
 
     completed_videos = []
     video_records = []
+    cancelled_topics = []
 
     from app.topic_history import record_topics
+
+    def add_video_record(record):
+        video_records.append(record)
+        update_status(
+            completed=sum(
+                item["status"] == "completed"
+                for item in video_records
+            ),
+            failed=sum(
+                item["status"] == "failed"
+                for item in video_records
+            ),
+            cancelled=sum(
+                item["status"] == "cancelled"
+                for item in video_records
+            ),
+            skipped=sum(
+                item["status"] == "skipped"
+                for item in video_records
+            ),
+        )
 
     for index, selected_topic in enumerate(
         topics,
@@ -797,6 +837,22 @@ def run_pipeline(
     ):
 
         topic = selected_topic["topic"]
+        update_status(
+            selected=len(topics),
+            current_topic=topic,
+        )
+
+        if cancelled():
+            cancelled_topics.append(topic)
+            add_video_record(
+                {
+                    "index": index,
+                    "topic": topic,
+                    "status": "cancelled",
+                    "reason": "Cancellation requested.",
+                }
+            )
+            continue
 
         print(
             "\n"
@@ -814,6 +870,18 @@ def run_pipeline(
         # -------------------------------------------------
         # RESEARCH
         # -------------------------------------------------
+
+        if cancelled():
+            cancelled_topics.append(topic)
+            add_video_record(
+                {
+                    "index": index,
+                    "topic": topic,
+                    "status": "cancelled",
+                    "reason": "Cancellation requested.",
+                }
+            )
+            continue
 
         print(
             "\n🔎 Researching topic..."
@@ -839,7 +907,7 @@ def run_pipeline(
                 "Skipping topic."
             )
 
-            video_records.append(
+            add_video_record(
                 {
                     "index": index,
                     "topic": topic,
@@ -847,11 +915,6 @@ def run_pipeline(
                     "reason": research_error or "No research results.",
                 }
             )
-            record_topics(
-                [selected_topic],
-                status="failed",
-            )
-
             continue
 
         try:
@@ -860,7 +923,7 @@ def run_pipeline(
                 results,
             )
         except Exception as exc:
-            video_records.append(
+            add_video_record(
                 {
                     "index": index,
                     "topic": topic,
@@ -877,6 +940,18 @@ def run_pipeline(
         # -------------------------------------------------
         # CONTENT GENERATION
         # -------------------------------------------------
+
+        if cancelled():
+            cancelled_topics.append(topic)
+            add_video_record(
+                {
+                    "index": index,
+                    "topic": topic,
+                    "status": "cancelled",
+                    "reason": "Cancellation requested.",
+                }
+            )
+            continue
 
         print(
             "\n✍️ Generating content package..."
@@ -903,7 +978,7 @@ def run_pipeline(
                 "Skipping topic."
             )
 
-            video_records.append(
+            add_video_record(
                 {
                     "index": index,
                     "topic": topic,
@@ -911,11 +986,6 @@ def run_pipeline(
                     "reason": content_error or "No content package generated.",
                 }
             )
-            record_topics(
-                [selected_topic],
-                status="failed",
-            )
-
             continue
 
         content = content_packages[0]
@@ -923,6 +993,18 @@ def run_pipeline(
         # -------------------------------------------------
         # VIDEO GENERATION
         # -------------------------------------------------
+
+        if cancelled():
+            cancelled_topics.append(topic)
+            add_video_record(
+                {
+                    "index": index,
+                    "topic": topic,
+                    "status": "cancelled",
+                    "reason": "Cancellation requested.",
+                }
+            )
+            continue
 
         try:
 
@@ -948,7 +1030,7 @@ def run_pipeline(
                 status="completed",
             )
 
-            video_records.append(
+            add_video_record(
                 {
                     "index": index,
                     "topic": topic,
@@ -974,7 +1056,7 @@ def run_pipeline(
                 f"Error: {type(exc).__name__}: {exc}"
             )
 
-            video_records.append(
+            add_video_record(
                 {
                     "index": index,
                     "topic": topic,
@@ -988,17 +1070,13 @@ def run_pipeline(
                     ),
                 }
             )
-            record_topics(
-                [selected_topic],
-                status="failed",
-            )
-
     # -----------------------------------------------------
     # RUN MANIFEST
     # -----------------------------------------------------
 
     run_manifest = {
         "mode": "trending_topics",
+        "execution_mode": mode,
         "requested_count": content_count,
         "selected_count": len(topics),
         "completed_count": len(completed_videos),
@@ -1006,6 +1084,7 @@ def run_pipeline(
             record["status"] == "failed"
             for record in video_records
         ),
+        "cancelled_count": len(cancelled_topics),
         "skipped_count": sum(
             record["status"] == "skipped"
             for record in video_records
@@ -1065,6 +1144,10 @@ def run_pipeline(
         f"Skipped: {run_manifest['skipped_count']}"
     )
 
+    print(
+        f"Cancelled: {run_manifest['cancelled_count']}"
+    )
+
     for record in video_records:
         if record["status"] == "failed":
             print(
@@ -1090,7 +1173,9 @@ def run_pipeline(
         "completed_videos": completed_videos,
         "selected_topics": topics,
         "video_records": video_records,
+        "cancelled_topics": cancelled_topics,
         "run_dir": run_dir,
+        "mode": mode,
     }
 
 
