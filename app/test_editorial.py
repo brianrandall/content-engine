@@ -4,6 +4,7 @@ from app.editorial import (
     SCORE_WEIGHTS,
     SCORE_FIELDS,
     build_editorial_slate,
+    build_evaluation_prompt,
     normalize_and_dedupe_trends,
     validate_evaluations,
 )
@@ -11,6 +12,25 @@ from app.trends import TrendItem
 
 
 class EditorialSelectionTests(unittest.TestCase):
+    def test_evaluation_prompt_defines_subject_classification(self):
+        prompt = build_evaluation_prompt([], 8)
+
+        expected_classifications = {
+            "Nvidia earnings": "business",
+            "Gaza cease-fire": "politics",
+            "Putin seizing businesses": "politics",
+            "FDA pancreatic cancer drug": "science",
+        }
+
+        self.assertIn("Classify the STORY SUBJECT", prompt)
+        self.assertIn("Do not use source publication", prompt)
+
+        for subject, category in expected_classifications.items():
+            self.assertIn(
+                f"{subject} -> {category}",
+                prompt,
+            )
+
     def evaluation(self, candidate_id, category="world", score=80):
         evaluation = {
             "candidate_id": candidate_id,

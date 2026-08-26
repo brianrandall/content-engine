@@ -151,6 +151,45 @@ For each candidate, return exactly one object in a JSON array with:
 - confidence: integer 0-100
 - brief_reason: concise evidence-based reason
 
+CATEGORY DEFINITIONS AND CLASSIFICATION RULES:
+
+- science: scientific discoveries, research, medicine, health,
+    space, or nature
+- technology: software, AI, hardware, cybersecurity, gadgets,
+    or tech companies/products
+- business: companies, markets, finance, earnings, deals,
+    economics, or labor
+- entertainment: celebrities, actors, musicians, movies,
+    television, or awards
+- culture: cultural movements, art, books, traditions, or society
+- politics: governments, politicians, elections, legislation,
+    geopolitical policy, or wars/conflicts involving governments
+- world: major international events primarily covering current
+    affairs rather than politics
+- history: historical events, people, discoveries, or anniversaries
+- internet: viral internet phenomena, social media culture, or
+    online communities
+- human-interest: compelling personal stories, unusual people,
+    or inspirational/emotional stories
+- sports: professional or amateur sports, athletes, or competitions
+- other: only when none of the above clearly applies
+
+Classify the STORY SUBJECT, not the publisher or wording of the
+headline. Medical drugs, FDA approvals, diseases, clinical research,
+and medical breakthroughs are science. Company earnings, stock
+markets, corporate deals, and financial results are business.
+Government actions, wars, cease-fires, sanctions, political figures,
+and geopolitical policy are politics. Technology companies do not
+automatically make a story technology. Do not use source publication
+or category metadata to determine category. When multiple categories
+could apply, choose the category representing the primary subject.
+
+Classification examples:
+- Nvidia earnings -> business
+- Gaza cease-fire -> politics
+- Putin seizing businesses -> politics
+- FDA pancreatic cancer drug -> science
+
 Score only what the supplied candidate data supports. Penalize stale
 news, weak source material, poor standalone video potential, and
 stories that are merely generic facts or discussions. Favor timely,
