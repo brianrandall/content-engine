@@ -316,69 +316,304 @@ def collect_trends(
 
 def rank_trending_topics(
     trends: list[TrendItem],
-    count: int = 10,
+    count: int = 8,
 ):
     """
-    Use Qwen to identify and rank the strongest
-    short-form video topics from collected trends.
+    Use Qwen to identify the strongest short-form video
+    opportunities from collected trend data.
+
+    The goal is to generate actual video-worthy story
+    concepts rather than simply returning trend titles.
     """
 
     if not trends:
         return []
 
     trend_data = [
-        trend.to_dict()
-        for trend in trends
+        {
+            "source_index": index,
+            "title": trend.title,
+            "url": trend.url,
+            "source": trend.source,
+        }
+        for index, trend in enumerate(trends)
     ]
 
     prompt = f"""
-You are a short-form content research analyst.
+You are the senior editorial strategist for a large
+faceless short-form video network.
 
-Below is a collection of current internet trends.
+Your job is NOT to summarize trends.
+
+Your job is to find STORIES inside the supplied trend data
+that could become compelling 30-90 second videos.
+
+Think like an editor deciding:
+
+"Would I actually make a video about this?"
 
 Trend data:
+
 {json.dumps(
     trend_data,
     indent=2,
     ensure_ascii=False,
 )}
 
-Identify the strongest potential topics for
-faceless short-form videos.
+---
+
+WHAT MAKES A GOOD VIDEO TOPIC?
+
+A strong topic should contain at least one of these:
+
+- something surprising
+- something people are suddenly talking about
+- something strange or bizarre
+- something that challenges what people assume
+- something with a clear conflict or tension
+- something with an interesting "why?"
+- something with a strong human story
+- something that reveals something people didn't know
+- something that makes people ask "wait, what?"
+- something with obvious visual storytelling potential
+- something consequential that ordinary people would care about
+
+The topic should make someone want to CLICK before they
+even know the full story.
+
+---
+
+BAD TOPICS:
+
+Do NOT return topics that are merely:
+
+- product launches
+- software releases
+- developer tools
+- GitHub projects
+- technical announcements
+- minor updates
+- generic political news
+- generic economic news
+- generic technology news
+- niche community discussions
+- academic papers with no compelling story
+- lists of tools
+- "X is trending"
+- "People are discussing X"
+- descriptions of websites
+- descriptions of Reddit posts
+- obvious summaries of the supplied headlines
+
+A topic being technically interesting does NOT make it
+a good short-form video.
+
+For example:
+
+BAD:
+"Language server for code editing"
+
+GOOD:
+Only if the supplied data contains an actual surprising
+story involving the technology.
+
+BAD:
+"Self-hosted ticketing system"
+
+GOOD:
+Only if there is a genuinely interesting story surrounding
+why people are suddenly building their own ticketing systems.
+
+---
+
+TURN TRENDS INTO VIDEO PREMISES
+
+Do not simply copy the title.
+
+Instead, ask:
+
+"What is the actual story here?"
+
+"What would make a normal person care?"
+
+"What is the most interesting question hidden inside
+this trend?"
+
+"What would make someone stop scrolling?"
+
+For example:
+
+Trend:
+"Study finds X behaves differently than expected"
+
+Potential video topic:
+"Scientists expected X to behave one way. It didn't."
+
+Trend:
+"Unexpected discovery in Antarctica"
+
+Potential video topic:
+"Something was found beneath Antarctica that scientists
+weren't expecting."
+
+These are examples of STRUCTURE only.
+
+Do not invent facts from them.
+
+---
+
+EVIDENCE BOUNDARY
+
+Every topic MUST be supported by the supplied trend data.
+
+You may reinterpret the editorial angle.
+
+You may NOT invent:
+
+- facts
+- people
+- events
+- statistics
+- dates
+- locations
+- companies
+- scientific findings
+- explanations
+- consequences
+- quotes
+
+If the supplied data does not support an interesting story,
+discard it.
+
+Do NOT manufacture a story just because we need {count}
+results.
+
+---
+
+DIVERSITY
+
+The final topics must represent genuinely different stories.
+
+Do NOT select:
+
+- multiple topics about the same event
+- multiple topics about the same company
+- multiple topics about the same person
+- multiple angles on one story
+- multiple versions of the same technology story
+
+If five trend items are really one story, treat them as ONE
+opportunity.
+
+Prefer eight different stories over eight variations
+of the same story.
+
+---
+
+EDITORIAL TEST
+
+Before selecting a topic, mentally complete:
+
+"People should watch this because..."
+
+If the answer is basically:
+
+"because this is an interesting software project"
+
+discard it.
+
+If the answer is:
+
+"because this is something unexpected that people will
+want explained"
+
+keep it.
+
+---
+
+RANKING
+
+Rank opportunities using these priorities:
+
+1. Stop-scroll curiosity
+2. Surprise / unusualness
+3. Broad audience appeal
+4. Storytelling potential
+5. Visual potential
+6. Emotional or human interest
+7. Timeliness
+8. Ability to explain the story clearly in 30-90 seconds
+
+Do NOT prioritize technical sophistication.
+
+Do NOT prioritize how impressive the source is.
+
+Prioritize whether the STORY is interesting.
+
+---
+
+CATEGORY
+
+Assign one broad category:
+
+- science
+- technology
+- business
+- entertainment
+- culture
+- politics
+- world
+- history
+- internet
+- human-interest
+- other
+
+---
+
+OUTPUT
 
 Return ONLY valid JSON.
 
-Return exactly this structure:
+Return a JSON array containing UP TO {count} topics.
 
-[
-    {{
-        "topic": "Specific video topic",
-        "reason": "Why this topic has strong content potential",
-        "source_ids": [
-            "source_id"
-        ]
-    }}
-]
+Do NOT pad the list.
+
+If only 4 genuinely strong video opportunities exist,
+return 4.
+
+Each object MUST contain exactly:
+
+{{
+    "topic": "The actual video-worthy story/topic",
+    "reason": "Why this story is worth making a short-form video about",
+    "category": "Broad category",
+    "source_indices": [
+        0
+    ]
+}}
 
 Rules:
 
-- Return up to {count} topics.
-- Prefer topics with strong curiosity.
-- Prefer surprising, unusual, counterintuitive,
-  controversial, or highly interesting subjects.
-- Prefer topics that can be explained clearly
-  in 30-90 seconds.
-- Every topic MUST be supported by supplied trend data.
-- Every source_id MUST exactly match a supplied trend source_id.
-- Do NOT invent facts.
-- Do NOT invent source_ids.
-- Do NOT combine unrelated trends.
-- A topic may use multiple source_ids only when
-  those sources clearly concern the same subject.
-- Prefer one source_id when one source is sufficient.
+- topic must describe a compelling story or premise.
+- topic must NOT simply copy the source title.
+- reason must explain the editorial opportunity.
+- category must be one of the categories above.
+- Every source_index MUST be an integer referring to the
+    zero-based index of the supplied trends list.
+- Do not invent source_indices; use only indices that exist
+    in the supplied trends list.
+- Use multiple source_indices only when they clearly describe
+  the same underlying story.
+- Prefer one source_index when sufficient.
+- Do not invent information.
+- Do not invent source_indices.
+- Do not invent stories.
 - Do not use markdown.
-- Do not wrap the JSON in code fences.
+- Do not use code fences.
+- Do not include commentary.
 - Do not include anything before or after the JSON.
+
+Order the topics from strongest opportunity to weakest.
 """
 
     topics = ask_qwen_json(prompt)
@@ -389,17 +624,9 @@ Rules:
             "a JSON array."
         )
 
-    trends_by_id = {
-        trend.source_id: trend
-        for trend in trends
-    }
-
     validated_topics = []
 
-    for index, topic in enumerate(
-        topics,
-        1,
-    ):
+    for index, topic in enumerate(topics, 1):
 
         if not isinstance(topic, dict):
             raise RuntimeError(
@@ -410,7 +637,8 @@ Rules:
         required_fields = {
             "topic",
             "reason",
-            "source_ids",
+            "category",
+            "source_indices",
         }
 
         missing = (
@@ -425,78 +653,89 @@ Rules:
                 f"{', '.join(sorted(missing))}"
             )
 
-        if not isinstance(
-            topic["source_ids"],
-            list,
-        ):
+        if not isinstance(topic["topic"], str):
             raise RuntimeError(
                 f"Trending topic {index} "
-                "'source_ids' must be a list."
+                "'topic' must be a string."
             )
 
-        if not topic["source_ids"]:
-            raise RuntimeError(
-                f"Trending topic {index} "
-                "has no source_ids."
-            )
-
-        resolved_sources = []
-        valid_topic = True
-
-        for source_id in topic["source_ids"]:
-
-            if not isinstance(
-                source_id,
-                str,
-            ):
-                raise RuntimeError(
-                    f"Trending topic {index} "
-                    "contains a non-string source_id."
-                )
-
-            trend = trends_by_id.get(
-                source_id
-            )
-
-            if trend is None:
-                print(
-                    f"⚠️ Trending topic {index} "
-                    f"references unknown source_id: "
-                    f"{source_id}. Skipping topic."
-                )
-                valid_topic = False
-                break
-
-            resolved_sources.append(
-                trend.to_dict()
-            )
-
-        if not valid_topic:
-            continue
-
-        if not isinstance(
-            topic["topic"],
-            str,
-        ) or not topic["topic"].strip():
+        if not topic["topic"].strip():
             raise RuntimeError(
                 f"Trending topic {index} "
                 "has an empty topic."
             )
 
-        if not isinstance(
-            topic["reason"],
-            str,
-        ) or not topic["reason"].strip():
+        if not isinstance(topic["reason"], str):
+            raise RuntimeError(
+                f"Trending topic {index} "
+                "'reason' must be a string."
+            )
+
+        if not topic["reason"].strip():
             raise RuntimeError(
                 f"Trending topic {index} "
                 "has an empty reason."
             )
 
+        if not isinstance(topic["category"], str):
+            raise RuntimeError(
+                f"Trending topic {index} "
+                "'category' must be a string."
+            )
+
+        if not topic["category"].strip():
+            raise RuntimeError(
+                f"Trending topic {index} "
+                "has an empty category."
+            )
+
+        if not isinstance(topic["source_indices"], list):
+            print(
+                f"   ⚠️ Trending topic {index} "
+                "has invalid source_indices: "
+                "expected a list"
+            )
+            continue
+
+        if not topic["source_indices"]:
+            print(
+                f"   ⚠️ Trending topic {index} "
+                "has no source_indices."
+            )
+            continue
+
+        resolved_sources = []
+        valid_topic = True
+
+        for source_index in topic["source_indices"]:
+
+            if (
+                not isinstance(source_index, int)
+                or isinstance(source_index, bool)
+                or not 0 <= source_index < len(trends)
+            ):
+                print(
+                    f"   ⚠️ Trending topic {index} "
+                    f"references invalid source_index: "
+                    f"{source_index}"
+                )
+
+                valid_topic = False
+                break
+
+            resolved_sources.append(
+                trends[source_index]
+            )
+
+        if not valid_topic:
+            continue
+
         validated_topics.append(
             {
                 "topic": topic["topic"].strip(),
                 "reason": topic["reason"].strip(),
-                "source_ids": topic["source_ids"],
+                "category": topic["category"].strip(),
+                "source_indices": topic["source_indices"],
                 "sources": resolved_sources,
             }
         )

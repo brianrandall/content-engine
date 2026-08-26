@@ -651,7 +651,7 @@ def create_content_video(
 
 def run_pipeline(
     niche: str,
-    content_count: int = 5,
+    content_count: int = 8,
 ):
 
     print(
@@ -1147,5 +1147,5 @@ if __name__ == "__main__":
 
         run_pipeline(
             niche,
-            content_count=5,
+            content_count=8,
         )

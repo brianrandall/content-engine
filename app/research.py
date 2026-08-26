@@ -205,9 +205,12 @@ def search_reddit(
     Fetch trending Reddit posts from multiple subreddits.
 
     Uses Reddit RSS feeds because the JSON API is blocked.
+
+    Each subreddit is treated as an independent source:
+    a failure or rate limit on one subreddit does not stop
+    collection from the others.
     """
 
-    import time
     import xml.etree.ElementTree as ET
 
     if not isinstance(subreddits, list):
@@ -216,10 +219,16 @@ def search_reddit(
         )
 
     posts = []
+    seen = set()
 
     namespace = {
         "atom": "http://www.w3.org/2005/Atom"
     }
+
+    print(
+        f"🔎 Collecting Reddit trends "
+        f"from {len(subreddits)} subreddits..."
+    )
 
     for subreddit in subreddits:
 
@@ -237,28 +246,24 @@ def search_reddit(
                 },
                 headers={
                     "User-Agent": (
-                        "Mozilla/5.0 "
-                        "(Macintosh; Intel Mac OS X) "
-                        "AppleWebKit/537.36 "
-                        "(KHTML, like Gecko) "
-                        "Chrome/140 Safari/537.36"
+                        "ContentEngine/1.0 "
+                        "(trend research)"
                     ),
                     "Accept": (
                         "application/rss+xml, "
                         "application/xml"
                     ),
                 },
-                timeout=20,
+                timeout=10,
             )
 
             if response.status_code == 429:
 
                 print(
-                    f"Reddit rate limit hit for "
-                    f"r/{subreddit}. Skipping."
+                    f"   ⚠️ r/{subreddit}: "
+                    "rate limited — skipping"
                 )
 
-                time.sleep(5)
                 continue
 
             response.raise_for_status()
@@ -271,6 +276,8 @@ def search_reddit(
                 "atom:entry",
                 namespace,
             )
+
+            subreddit_count = 0
 
             for entry in entries[:limit]:
 
@@ -299,22 +306,39 @@ def search_reddit(
                     namespace,
                 )
 
+                title_text = (
+                    title.text.strip()
+                    if title is not None
+                    and title.text
+                    else ""
+                )
+
+                url = (
+                    link.get("href")
+                    if link is not None
+                    else None
+                )
+
+                if not title_text:
+                    continue
+
+                identity = (
+                    url
+                    or title_text.lower()
+                )
+
+                if identity in seen:
+                    continue
+
+                seen.add(identity)
+
                 posts.append(
                     {
-                        "title": (
-                            title.text.strip()
-                            if title is not None
-                            and title.text
-                            else ""
-                        ),
+                        "title": title_text,
                         "subreddit": subreddit,
                         "score": None,
                         "comments": None,
-                        "url": (
-                            link.get("href")
-                            if link is not None
-                            else None
-                        ),
+                        "url": url,
                         "selftext": (
                             content.text.strip()
                             if content is not None
@@ -335,23 +359,41 @@ def search_reddit(
                     }
                 )
 
-            # Slow down requests so Reddit doesn't
-            # immediately rate-limit the next subreddit.
-            time.sleep(3)
+                subreddit_count += 1
+
+            print(
+                f"   ✅ r/{subreddit}: "
+                f"{subreddit_count} posts"
+            )
 
         except requests.RequestException as exc:
 
             print(
-                f"Reddit request failed for "
-                f"r/{subreddit}: {exc}"
+                f"   ⚠️ r/{subreddit}: "
+                f"request failed — "
+                f"{type(exc).__name__}: {exc}"
             )
 
         except ET.ParseError as exc:
 
             print(
-                f"Reddit RSS parsing failed for "
-                f"r/{subreddit}: {exc}"
+                f"   ⚠️ r/{subreddit}: "
+                f"RSS parsing failed — "
+                f"{type(exc).__name__}: {exc}"
             )
+
+        except Exception as exc:
+
+            print(
+                f"   ⚠️ r/{subreddit}: "
+                f"unexpected error — "
+                f"{type(exc).__name__}: {exc}"
+            )
+
+    print(
+        f"🔎 Reddit collection complete: "
+        f"{len(posts)} unique posts"
+    )
 
     return posts
 
@@ -419,9 +461,24 @@ Rules:
 - Do not include anything before or after the JSON.
 """
 
-    topics = ask_qwen_json(
-        prompt,
-    )
+    topics = ask_qwen_json(prompt)
+
+    # Qwen sometimes wraps an otherwise valid JSON array
+    # inside an object such as {"topics": [...]}. Normalize
+    # that response before validation.
+
+    if isinstance(topics, dict):
+
+        wrapped_topics = topics.get("topics")
+
+        if isinstance(wrapped_topics, list):
+            topics = wrapped_topics
+
+    if not isinstance(topics, list):
+        raise RuntimeError(
+            "Trend topic ranking did not return "
+            "a JSON array or a {'topics': [...]} object."
+        )
 
     if not isinstance(topics, list):
         raise RuntimeError(
