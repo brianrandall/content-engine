@@ -8,6 +8,7 @@ from app.research import ask_qwen_json
 
 MAX_VIDEOS = 8
 CATEGORY_REPETITION_PENALTIES = (0, 6, 14, 24, 36, 50)
+RECOMMENDATION_BONUS_MAX = 5
 
 SCORE_WEIGHTS = {
     "timeliness": 0.16,
@@ -162,6 +163,18 @@ def _valid_score(value):
     return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 100
 
 
+def _recommendation_bonus(evaluation):
+    if not evaluation["recommended"]:
+        return 0
+
+    return round(
+        RECOMMENDATION_BONUS_MAX
+        * evaluation["confidence"]
+        / 100,
+        2,
+    )
+
+
 def validate_evaluations(raw_evaluations, candidates):
     if isinstance(raw_evaluations, dict):
         raw_evaluations = raw_evaluations.get("evaluations")
@@ -250,8 +263,13 @@ def build_editorial_slate(evaluations, count=MAX_VIDEOS):
                 occurrence,
                 len(CATEGORY_REPETITION_PENALTIES) - 1,
             )]
+            recommendation_bonus = _recommendation_bonus(
+                evaluation
+            )
             adjusted_score = round(
-                evaluation["opportunity_score"] - penalty,
+                evaluation["opportunity_score"]
+                + recommendation_bonus
+                - penalty,
                 2,
             )
 
@@ -279,6 +297,9 @@ def build_editorial_slate(evaluations, count=MAX_VIDEOS):
                 "source_indices": candidate["source_indices"],
                 "sources": candidate["sources"],
                 "opportunity_score": evaluation["opportunity_score"],
+                "recommendation_bonus": _recommendation_bonus(
+                    evaluation
+                ),
                 "adjusted_score": best_adjusted_score,
                 "selection_rationale": (
                     "Selected by weighted editorial score with "
