@@ -731,6 +731,10 @@ def run_pipeline(
         f"Selected {len(topics)} topics."
     )
 
+    from app.topic_history import record_topics
+
+    record_topics(topics)
+
     # -----------------------------------------------------
     # SAVE TREND DATA
     # -----------------------------------------------------
@@ -758,7 +762,16 @@ def run_pipeline(
     ) as f:
 
         json.dump(
-            topics,
+            [
+                {
+                    **topic,
+                    "sources": [
+                        source.to_dict()
+                        for source in topic["sources"]
+                    ],
+                }
+                for topic in topics
+            ],
             f,
             indent=2,
             ensure_ascii=False,

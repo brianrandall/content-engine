@@ -307,6 +307,27 @@ def collect_trends(
             f"{type(exc).__name__}: {exc}"
         )
 
+    # -----------------------------------------------------
+    # GOOGLE NEWS
+    # -----------------------------------------------------
+
+    try:
+
+        from app.news import fetch_google_news_trends
+
+        trends.extend(
+            fetch_google_news_trends(
+                limit=30
+            )
+        )
+
+    except Exception as exc:
+
+        print(
+            "Google News collection failed: "
+            f"{type(exc).__name__}: {exc}"
+        )
+
     return trends
 
 
@@ -328,6 +349,25 @@ def rank_trending_topics(
 
     if not trends:
         return []
+
+    from app.topic_history import (
+        filter_covered_trends,
+        load_topic_history,
+        recent_topics,
+    )
+
+    history = load_topic_history()
+    trends = filter_covered_trends(
+        trends,
+        history,
+    )
+
+    if not trends:
+        return []
+
+    covered_topics = recent_topics(
+        history,
+    )
 
     trend_data = [
         {
@@ -356,6 +396,14 @@ Trend data:
 
 {json.dumps(
     trend_data,
+    indent=2,
+    ensure_ascii=False,
+)}
+
+Recently covered topics. Do not select these stories again:
+
+{json.dumps(
+    covered_topics,
     indent=2,
     ensure_ascii=False,
 )}
@@ -549,6 +597,9 @@ Do NOT prioritize technical sophistication.
 Do NOT prioritize how impressive the source is.
 
 Prioritize whether the STORY is interesting.
+
+Prefer timely real-world headline events over generic facts,
+evergreen trivia, or abstract discussions.
 
 ---
 
