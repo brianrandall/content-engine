@@ -337,9 +337,9 @@ def fetch_google_news_query(
                 content="",
                 published_at=published_at,
                 metadata={
-                    "category": category,
                     "publisher": publisher,
                     "query": query,
+                    "category": category,
                 },
             )
         )
@@ -389,7 +389,7 @@ def _print_collection_summary(trends):
         )
         category = trend.metadata.get(
             "category",
-            trend.source,
+            "uncategorized",
         )
         category_counts[category] = (
             category_counts.get(category, 0) + 1
