@@ -256,7 +256,33 @@ def build_editorial_slate(evaluations, count=MAX_VIDEOS):
         best_index = 0
         best_adjusted_score = None
 
-        for index, evaluation in enumerate(remaining):
+        if selected:
+            unused_categories = {
+                evaluation["category"]
+                for evaluation in remaining
+                if evaluation["category"] not in category_counts
+            }
+
+            if unused_categories:
+                eligible_indices = [
+                    index
+                    for index, evaluation in enumerate(remaining)
+                    if evaluation["category"] in unused_categories
+                ]
+            else:
+                eligible_indices = [
+                    index
+                    for index, evaluation in enumerate(remaining)
+                    if category_counts.get(evaluation["category"], 0) < 2
+                ]
+
+                if not eligible_indices:
+                    eligible_indices = list(range(len(remaining)))
+        else:
+            eligible_indices = list(range(len(remaining)))
+
+        for index in eligible_indices:
+            evaluation = remaining[index]
             category = evaluation["category"]
             occurrence = category_counts.get(category, 0)
             penalty = CATEGORY_REPETITION_PENALTIES[min(
