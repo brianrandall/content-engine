@@ -1,4 +1,5 @@
 import json
+import re
 import requests
 
 import ollama
@@ -12,13 +13,162 @@ MODEL = "qwen3:8b"
 # QWEN JSON HELPERS
 # =========================================================
 
+def _extract_json(raw_content: str):
+    """
+    Extract JSON from common LLM response formats.
+
+    Handles:
+    - plain JSON
+    - markdown code fences
+    - leading/trailing prose
+    - <think>...</think> blocks
+    """
+
+    if not raw_content:
+        raise RuntimeError(
+            "Qwen returned an empty response."
+        )
+
+    text = raw_content.strip()
+
+    # -----------------------------------------------------
+    # REMOVE QWEN THINKING BLOCKS
+    # -----------------------------------------------------
+
+    text = re.sub(
+        r"<think>.*?</think>",
+        "",
+        text,
+        flags=re.DOTALL | re.IGNORECASE,
+    ).strip()
+
+    # -----------------------------------------------------
+    # REMOVE MARKDOWN CODE FENCES
+    # -----------------------------------------------------
+
+    text = re.sub(
+        r"^```(?:json)?\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    text = re.sub(
+        r"\s*```$",
+        "",
+        text,
+    )
+
+    text = text.strip()
+
+    # -----------------------------------------------------
+    # DIRECT JSON PARSE
+    # -----------------------------------------------------
+
+    try:
+        return json.loads(text)
+
+    except json.JSONDecodeError:
+        pass
+
+    # -----------------------------------------------------
+    # EXTRACT FIRST JSON ARRAY / OBJECT
+    # -----------------------------------------------------
+
+    starts = []
+
+    object_start = text.find("{")
+    array_start = text.find("[")
+
+    if object_start >= 0:
+        starts.append(
+            (object_start, "{", "}")
+        )
+
+    if array_start >= 0:
+        starts.append(
+            (array_start, "[", "]")
+        )
+
+    if not starts:
+        raise json.JSONDecodeError(
+            "No JSON object or array found.",
+            text,
+            0,
+        )
+
+    starts.sort(
+        key=lambda item: item[0]
+    )
+
+    start, opening, closing = starts[0]
+
+    depth = 0
+    in_string = False
+    escaped = False
+
+    for index in range(
+        start,
+        len(text),
+    ):
+
+        char = text[index]
+
+        if in_string:
+
+            if escaped:
+                escaped = False
+
+            elif char == "\\":
+                escaped = True
+
+            elif char == '"':
+                in_string = False
+
+            continue
+
+        if char == '"':
+            in_string = True
+            continue
+
+        if char == opening:
+            depth += 1
+
+        elif char == closing:
+            depth -= 1
+
+            if depth == 0:
+
+                candidate = text[
+                    start:index + 1
+                ]
+
+                return json.loads(
+                    candidate
+                )
+
+    raise json.JSONDecodeError(
+        "Could not locate complete JSON.",
+        text,
+        start,
+    )
+
+
 def ask_qwen_json(
     prompt: str,
     repair_attempts: int = 2,
 ):
     """
     Ask Qwen for JSON and automatically repair malformed JSON.
+
+    This function is intentionally tolerant of common local
+    LLM output issues such as thinking blocks, markdown fences,
+    and small amounts of surrounding prose.
     """
+
+    print(
+        f"   🤖 Asking {MODEL}..."
+    )
 
     response = ollama.chat(
         model=MODEL,
@@ -30,60 +180,129 @@ def ask_qwen_json(
         ],
     )
 
-    raw_content = response["message"]["content"].strip()
+    raw_content = (
+        response["message"]["content"]
+        .strip()
+    )
 
-    for attempt in range(repair_attempts + 1):
+    print(
+        f"   🤖 Qwen response: "
+        f"{len(raw_content)} characters"
+    )
 
-        try:
-            return json.loads(raw_content)
+    # -----------------------------------------------------
+    # FIRST ATTEMPT
+    # -----------------------------------------------------
 
-        except json.JSONDecodeError:
+    try:
+        parsed = _extract_json(
+            raw_content
+        )
 
-            if attempt >= repair_attempts:
-                raise RuntimeError(
-                    "Qwen returned invalid JSON "
-                    "after repair attempts."
-                )
+        print(
+            "   ✅ Qwen returned valid JSON."
+        )
 
-            repair_prompt = f"""
-The following response was supposed to be valid JSON,
-but it contains a JSON formatting error.
+        return parsed
 
-Repair the JSON.
+    except (
+        json.JSONDecodeError,
+        RuntimeError,
+    ) as first_error:
 
-IMPORTANT:
-- Preserve the original information.
-- Do not add new information.
-- Do not remove valid information.
-- Return ONLY valid JSON.
-- Do not use markdown.
-- Do not wrap the JSON in code fences.
-- Do not include any explanation.
+        print(
+            "   ⚠️ Qwen response was not "
+            "immediately parseable."
+        )
 
-Malformed JSON:
+        print(
+            f"   Reason: {first_error}"
+        )
+
+    # -----------------------------------------------------
+    # REPAIR ATTEMPTS
+    # -----------------------------------------------------
+
+    for attempt in range(
+        repair_attempts
+    ):
+
+        repair_prompt = f"""
+You are a JSON repair tool.
+
+The following response was supposed to contain valid JSON:
 
 {raw_content}
+
+Repair the response.
+
+IMPORTANT:
+
+- Return ONLY valid JSON.
+- Do not use markdown.
+- Do not use code fences.
+- Do not include explanations.
+- Do not add information.
+- Do not remove information.
+- Preserve the original structure.
+- The final response MUST be parseable by Python json.loads().
 """
 
-            repair_response = ollama.chat(
-                model=MODEL,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": repair_prompt,
-                    }
-                ],
-            )
+        print(
+            f"   🔧 Qwen JSON repair "
+            f"attempt {attempt + 1}/"
+            f"{repair_attempts}"
+        )
 
-            raw_content = (
-                repair_response["message"]["content"]
-                .strip()
+        repair_response = ollama.chat(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": repair_prompt,
+                }
+            ],
+        )
+
+        raw_content = (
+            repair_response["message"]["content"]
+            .strip()
+        )
+
+        try:
+
+            parsed = _extract_json(
+                raw_content
             )
 
             print(
-                f"   🔧 Qwen JSON repair "
-                f"attempt {attempt + 1}"
+                "   ✅ JSON repair succeeded."
             )
+
+            return parsed
+
+        except (
+            json.JSONDecodeError,
+            RuntimeError,
+        ) as repair_error:
+
+            print(
+                f"   ⚠️ Repair attempt failed: "
+                f"{repair_error}"
+            )
+
+    # -----------------------------------------------------
+    # FINAL FAILURE
+    # -----------------------------------------------------
+
+    preview = raw_content[:2000]
+
+    raise RuntimeError(
+        "Qwen returned invalid JSON after "
+        f"{repair_attempts} repair attempts.\n\n"
+        "Final response preview:\n"
+        f"{preview}"
+    )
 
 
 def repair_json(
@@ -107,7 +326,8 @@ Repair ONLY the JSON syntax.
 
 Do not change the meaning or content.
 Do not add information.
-Do not remove information unless required to make the JSON valid.
+Do not remove information unless required to make
+the JSON valid.
 
 The expected structure is:
 
@@ -119,29 +339,10 @@ Do not wrap the JSON in code fences.
 Do not include any explanation.
 """
 
-    response = ollama.chat(
-        model=MODEL,
-        messages=[
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
+    return ask_qwen_json(
+        prompt,
+        repair_attempts=2,
     )
-
-    repaired = (
-        response["message"]["content"]
-        .strip()
-    )
-
-    try:
-        return json.loads(repaired)
-
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            "JSON repair failed.\n"
-            f"Repaired output:\n{repaired}"
-        ) from exc
 
 
 # =========================================================
@@ -205,15 +406,14 @@ def search_reddit(
     Fetch trending Reddit posts from multiple subreddits.
 
     Uses Reddit RSS feeds because the JSON API is blocked.
-
-    Each subreddit is treated as an independent source:
-    a failure or rate limit on one subreddit does not stop
-    collection from the others.
     """
 
     import xml.etree.ElementTree as ET
 
-    if not isinstance(subreddits, list):
+    if not isinstance(
+        subreddits,
+        list,
+    ):
         raise TypeError(
             "subreddits must be a list."
         )
@@ -397,6 +597,7 @@ def search_reddit(
 
     return posts
 
+
 def discover_reddit_topics(
     subreddits: list[str],
     limit_per_subreddit: int = 5,
@@ -461,29 +662,29 @@ Rules:
 - Do not include anything before or after the JSON.
 """
 
-    topics = ask_qwen_json(prompt)
-
-    # Qwen sometimes wraps an otherwise valid JSON array
-    # inside an object such as {"topics": [...]}. Normalize
-    # that response before validation.
+    topics = ask_qwen_json(
+        prompt
+    )
 
     if isinstance(topics, dict):
 
-        wrapped_topics = topics.get("topics")
-
-        if isinstance(wrapped_topics, list):
-            topics = wrapped_topics
-
-    if not isinstance(topics, list):
-        raise RuntimeError(
-            "Trend topic ranking did not return "
-            "a JSON array or a {'topics': [...]} object."
+        wrapped_topics = topics.get(
+            "topics"
         )
 
-    if not isinstance(topics, list):
+        if isinstance(
+            wrapped_topics,
+            list,
+        ):
+            topics = wrapped_topics
+
+    if not isinstance(
+        topics,
+        list,
+    ):
         raise RuntimeError(
-            "Reddit topic discovery did not return "
-            "a JSON array."
+            "Reddit topic discovery did not "
+            "return a JSON array."
         )
 
     validated_topics = []
@@ -499,7 +700,10 @@ Rules:
         1,
     ):
 
-        if not isinstance(topic, dict):
+        if not isinstance(
+            topic,
+            dict,
+        ):
             raise RuntimeError(
                 f"Reddit topic {index} "
                 "is not a JSON object."
@@ -553,6 +757,7 @@ Rules:
 
     return validated_topics
 
+
 def discover_best_topic(
     subreddits: list[str],
 ):
@@ -573,7 +778,7 @@ def discover_best_topic(
 
     prompt = f"""
 You are selecting the single best topic for a
-faceless short-form video production system.
+faceless short-form video.
 
 Candidate topics:
 
@@ -583,18 +788,7 @@ Candidate topics:
     ensure_ascii=False,
 )}
 
-Select the ONE topic with the strongest potential
-for audience retention and broad interest.
-
-Consider:
-
-- curiosity
-- surprise
-- unusualness
-- emotional interest
-- broad audience appeal
-- ability to tell a compelling short story
-- potential for strong visual storytelling
+Select the ONE strongest candidate.
 
 Return ONLY valid JSON.
 
@@ -620,7 +814,7 @@ Rules:
 """
 
     selected = ask_qwen_json(
-        prompt,
+        prompt
     )
 
     if not isinstance(
@@ -676,6 +870,7 @@ Rules:
 
     return selected
 
+
 def discover_topics(
     niche: str,
     count: int = 10,
@@ -729,16 +924,25 @@ Requirements:
         prompt
     )
 
-    if not isinstance(result, dict):
+    if not isinstance(
+        result,
+        dict,
+    ):
         raise RuntimeError(
             "Topic discovery did not return an object."
         )
 
-    topics = result.get("topics")
+    topics = result.get(
+        "topics"
+    )
 
-    if not isinstance(topics, list):
+    if not isinstance(
+        topics,
+        list,
+    ):
         raise RuntimeError(
-            "Topic discovery did not return a topics array."
+            "Topic discovery did not return "
+            "a topics array."
         )
 
     if len(topics) != count:
@@ -752,7 +956,10 @@ Requirements:
         1,
     ):
 
-        if not isinstance(topic, dict):
+        if not isinstance(
+            topic,
+            dict,
+        ):
             raise RuntimeError(
                 f"Topic {index} is not an object."
             )
@@ -837,10 +1044,10 @@ Requirements:
             "a JSON object."
         )
 
+    # Qwen occasionally omits the redundant topic field.
+    # The topic is already known from the function argument.
     if "topic" not in research:
-        raise RuntimeError(
-            "Research analyzer is missing 'topic'."
-        )
+        research["topic"] = query
 
     if "claims" not in research:
         raise RuntimeError(
@@ -856,10 +1063,6 @@ Requirements:
             "must be a list."
         )
 
-    # -----------------------------------------------------
-    # VALIDATE SOURCE REFERENCES
-    # -----------------------------------------------------
-
     validated_claims = []
 
     for index, claim in enumerate(
@@ -867,7 +1070,10 @@ Requirements:
         1,
     ):
 
-        if not isinstance(claim, dict):
+        if not isinstance(
+            claim,
+            dict,
+        ):
             raise RuntimeError(
                 f"Research claim {index} "
                 "is not an object."
@@ -930,10 +1136,6 @@ Requirements:
         validated_claims.append(
             claim
         )
-
-    # -----------------------------------------------------
-    # PRESERVE ORIGINAL SEARCH RESULTS
-    # -----------------------------------------------------
 
     research["sources"] = [
         {
@@ -1018,7 +1220,10 @@ Requirements:
         prompt
     )
 
-    if not isinstance(score, dict):
+    if not isinstance(
+        score,
+        dict,
+    ):
         raise RuntimeError(
             "Topic scoring did not return a JSON object."
         )
@@ -1035,7 +1240,10 @@ Requirements:
         "reason",
     }
 
-    missing = required_fields - score.keys()
+    missing = (
+        required_fields
+        - score.keys()
+    )
 
     if missing:
         raise RuntimeError(
@@ -1056,8 +1264,8 @@ def generate_content(
     count: int = 5,
 ):
     """
-    Generate multiple distinct faceless short-form video
-    content packages using only evidence-backed research claims.
+    Generate distinct faceless short-form video
+    content packages using only evidence-backed research.
     """
 
     if count == 1:
@@ -1093,7 +1301,7 @@ Topic:
 {query}
 
 Evidence-backed research:
-{json.dumps(research, indent=2)}
+{json.dumps(research, indent=2, ensure_ascii=False)}
 
 {angle_instruction}
 
@@ -1113,17 +1321,10 @@ IMPORTANT FACTUAL ACCURACY RULES:
 
 Return ONLY a JSON array.
 
-Your entire response MUST begin with `[` and end with `]`.
-
-The JSON array MUST contain exactly {count} object(s).
+The response MUST contain exactly {count} object(s).
 
 Even when count is 1, you MUST return a JSON array
-containing one object. NEVER return a single JSON object.
-
-Do NOT explain your answer.
-Do NOT output prose.
-Do NOT output a JSON object by itself.
-Do NOT use markdown or code fences.
+containing one object.
 
 Each object MUST use exactly these fields:
 
@@ -1145,17 +1346,65 @@ Requirements:
 - "narration" contains ONLY words that should actually be spoken.
 - Do NOT include labels such as HOOK, TITLE, DESCRIPTION, CTA,
   or ANGLE inside narration.
-- Do NOT use markdown.
-- Do NOT wrap the JSON in code fences.
-- Do NOT include anything before or after the JSON.
 - Narration should contain approximately 80-140 words.
+- Do not use markdown.
+- Do not use code fences.
+- Do not include anything before or after the JSON array.
 """
 
-    content = ask_qwen_json(
-        prompt
+    print(
+        "\n   🧠 Generating content with "
+        f"{MODEL}..."
     )
 
-    if not isinstance(content, list):
+    try:
+        content = ask_qwen_json(
+            prompt
+        )
+
+    except Exception as exc:
+
+        print(
+            "\n   ❌ CONTENT GENERATION ERROR"
+        )
+
+        print(
+            f"   {type(exc).__name__}: {exc}"
+        )
+
+        raise
+
+    if isinstance(
+        content,
+        dict,
+    ):
+
+        # Gracefully handle the common
+        # {"content": [...]} response.
+
+        for key in (
+            "content",
+            "contents",
+            "packages",
+            "videos",
+        ):
+
+            wrapped = content.get(
+                key
+            )
+
+            if isinstance(
+                wrapped,
+                list,
+            ):
+
+                content = wrapped
+                break
+
+    if not isinstance(
+        content,
+        list,
+    ):
         raise RuntimeError(
             "Content generation did not return "
             "a JSON array."
@@ -1181,7 +1430,10 @@ Requirements:
         1,
     ):
 
-        if not isinstance(package, dict):
+        if not isinstance(
+            package,
+            dict,
+        ):
             raise RuntimeError(
                 f"Content package {index} "
                 "is not a JSON object."
@@ -1198,6 +1450,32 @@ Requirements:
                 f"is missing fields: "
                 f"{', '.join(sorted(missing))}"
             )
+
+        for field in required_fields:
+
+            value = package.get(
+                field
+            )
+
+            if not isinstance(
+                value,
+                str,
+            ):
+                raise RuntimeError(
+                    f"Content package {index} "
+                    f"field '{field}' must be a string."
+                )
+
+            if not value.strip():
+                raise RuntimeError(
+                    f"Content package {index} "
+                    f"field '{field}' is empty."
+                )
+
+    print(
+        f"   ✅ Generated {len(content)} "
+        "content package(s)."
+    )
 
     return content
 
@@ -1257,7 +1535,10 @@ Requirements:
         prompt
     )
 
-    if not isinstance(visual_plan, dict):
+    if not isinstance(
+        visual_plan,
+        dict,
+    ):
         raise RuntimeError(
             "Visual plan must be a JSON object."
         )
@@ -1275,7 +1556,9 @@ Requirements:
             "Visual plan 'scenes' must be a list."
         )
 
-    if not 3 <= len(visual_plan["scenes"]) <= 6:
+    if not 3 <= len(
+        visual_plan["scenes"]
+    ) <= 6:
         raise RuntimeError(
             "Visual plan must contain between "
             "3 and 6 scenes."
@@ -1286,7 +1569,10 @@ Requirements:
         1,
     ):
 
-        if not isinstance(scene, dict):
+        if not isinstance(
+            scene,
+            dict,
+        ):
             raise RuntimeError(
                 f"Visual scene {index} "
                 "is not a JSON object."
@@ -1298,7 +1584,10 @@ Requirements:
             "duration",
         }
 
-        missing = required_fields - scene.keys()
+        missing = (
+            required_fields
+            - scene.keys()
+        )
 
         if missing:
             raise RuntimeError(
