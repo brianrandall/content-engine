@@ -16,7 +16,7 @@ Both production pipelines can publish completed videos to Instagram and YouTube.
 Project directory:
 
 ```text
-~/Dropbox/PROJECTS/content-engine
+content-engine
 ```
 
 The project-specific Python virtual environment is:
@@ -235,13 +235,7 @@ Instagram publishing is intentionally available as a standalone module so a fail
 Run:
 
 ```bash
-python3 -m app.publish_instagram "/absolute/path/to/final_short.mp4"
-```
-
-Example:
-
-```bash
-python3 -m app.publish_instagram "/Users/brianrandall/Dropbox/PROJECTS/content-engine/output/runs/20260827_112049_batch/01_menace_ii_society_actor_dies_at_52_meningitis_claimed_his_li/final_short.mp4"
+python3 -m app.publish_instagram "/path/to/final_short.mp4"
 ```
 
 The publisher locates the video's `manifest.json` and uses the media server/Tailscale Funnel URL to make the video available to Instagram.
@@ -255,13 +249,7 @@ YouTube publishing is also standalone for easy troubleshooting.
 Run:
 
 ```bash
-python3 -m app.publish_youtube "/absolute/path/to/final_short.mp4"
-```
-
-Example:
-
-```bash
-python3 -m app.publish_youtube "/Users/brianrandall/Dropbox/PROJECTS/content-engine/output/runs/20260827_112049_batch/04_fed_talks_crypto_bitcoin_eyes_80k_resistance/final_short.mp4"
+python3 -m app.publish_youtube "/path/to/final_short.mp4"
 ```
 
 The YouTube publisher reads the video's manifest for its title/metadata and uploads the video.
@@ -436,7 +424,7 @@ The manifest is used by the publishing components for metadata and publishing st
 ### Start the system from a terminal
 
 ```bash
-cd ~/Dropbox/PROJECTS/content-engine
+cd content-engine
 source contentVenv/bin/activate
 ./run.sh
 ```
