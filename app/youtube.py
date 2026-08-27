@@ -67,7 +67,7 @@ def upload_video(video_path: Path, title: str, description: str):
             "categoryId": "22",
         },
         "status": {
-            "privacyStatus": "private",
+            "privacyStatus": "public",
             "selfDeclaredMadeForKids": False,
         },
         "contentDetails": {
@@ -134,3 +134,4 @@ def get_video_stats(video_id: str):
         "published_at": snippet.get("publishedAt"),
         "stats_updated_at": datetime.now(timezone.utc).isoformat(),
     }
+
