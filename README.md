@@ -2,28 +2,27 @@
 
 Automated faceless short-form video production and publishing pipeline.
 
-The project currently runs as two production modes:
+## What It Does
 
-- `pipeline.py` — produces **one video**.
-- `pipeline_batch.py` — produces the **4-video morning batch**.
+The system discovers current topics, researches them, generates short-form videos, and publishes completed videos to Instagram and YouTube.
 
-Both production pipelines can publish completed videos to Instagram and YouTube.
+Production is split into two modes:
+
+- `pipeline.py` — one video
+- `pipeline_batch.py` — four-video batch
+
+Publishing is separated into independently testable modules:
+
+- `app/publish_instagram.py`
+- `app/publish_youtube.py`
+
+Telegram provides remote scheduler control, status, and publication notifications.
 
 ---
 
-## 1. Project Setup
+## 1. Setup
 
-Project directory:
-
-```text
-content-engine
-```
-
-The project-specific Python virtual environment is:
-
-```text
-contentVenv
-```
+The project uses a dedicated Python virtual environment named `contentVenv`.
 
 Activate it from the project directory:
 
@@ -31,262 +30,257 @@ Activate it from the project directory:
 source contentVenv/bin/activate
 ```
 
-You should then see `(contentVenv)` at the beginning of your shell prompt.
-
 ---
 
-# 2. Start Everything
+## 2. Start Everything
 
-The normal way to start the system is:
+The normal entry point is:
 
 ```bash
 ./run.sh
 ```
 
-`run.sh` handles:
+`run.sh` is responsible for exactly these services:
 
-1. Tailscale Funnel availability check.
-2. `app.media_server`.
-3. `app.telegram_bot`.
-4. The production scheduler.
+1. Tailscale Funnel availability check
+2. `app.media_server`
+3. `app.telegram_bot`
+4. The production scheduler
 
-The media server and Telegram bot are kept running in the background.
+It does **not** create or manage production directories. The production pipelines handle their own output structure.
 
-**The scheduler stays in the foreground when `./run.sh` is launched manually.** Do not close that terminal if you want scheduled production to continue.
-
-The scheduler does not create or manage production directories. `pipeline.py` and `pipeline_batch.py` handle their own output directories.
+The media server and Telegram bot run in the background. The scheduler remains attached to the terminal when `run.sh` is started manually, so keep that terminal open if you want the schedule to continue.
 
 ### Scheduler
 
-The current schedule is anchored to 10:00 AM local Mac time:
+The schedule repeats every day:
 
 ```text
-10:00 AM  → pipeline_batch      (4 videos)
-4:00 PM   → pipeline             (1 video)
-10:00 PM  → pipeline             (1 video)
-4:00 AM   → pipeline             (1 video)
-10:00 AM  → pipeline_batch      (4 videos)
+10:00 AM  → pipeline_batch  (4 videos)
+4:00 PM   → pipeline         (1 video)
+10:00 PM  → pipeline         (1 video)
+4:00 AM   → pipeline         (1 video)
 ```
 
-So after the morning batch, a single video is produced every six hours until the next morning batch.
-
-`run.sh` prevents a second scheduler instance from being started while one is already running.
+The scheduler is anchored to local Mac time. It prevents duplicate scheduler instances.
 
 ---
 
-## 3. Telegram Scheduler Control
+## 3. Telegram Controls
 
-The Telegram bot can start and stop the scheduler without opening a terminal.
+The Telegram bot runs independently of the production scheduler.
 
 ### `/run`
-
-Send:
 
 ```text
 /run
 ```
 
-This starts:
+Starts `./run.sh` in the background if the scheduler is not already running.
 
-```bash
-./run.sh
-```
-
-in the background. It starts the scheduler; it does **not** immediately run a production job unless the next scheduled time has arrived.
-
-If the scheduler is already running, `/run` reports the existing scheduler PID instead of starting a duplicate.
+If the scheduler is already running, the existing scheduler PID is reported instead of starting another copy.
 
 ### `/stop`
-
-Send:
 
 ```text
 /stop
 ```
 
-This stops the scheduler started by `/run`.
+Stops the scheduler.
 
 The media server and Telegram bot remain running.
 
-If `/run` started the scheduler, `/stop` also terminates an in-progress scheduled pipeline child so a scheduled production job is not left running after the scheduler is stopped.
-
-If `./run.sh` was started manually from a terminal, `/stop` only signals the scheduler process itself rather than risking the terminal's process group.
+If `/run` started the scheduler, `/stop` also terminates an in-progress scheduled pipeline child so production is not left running behind the stopped scheduler.
 
 ### `/status`
-
-Send:
 
 ```text
 /status
 ```
 
-The bot reports whether the scheduler is running and, when available, its PID.
+Reports Telegram status, scheduler status/PID, local LLM status, and publishing status.
 
-### Automatic publication notifications
-
-When a scheduled run finishes, the scheduler sends a Telegram report containing each completed video's publication status. Successful YouTube and Instagram uploads include their permalinks when the platform APIs provide them.
-
-The Telegram bot records the chat ID used with `/run` in:
+### `/runlocal`
 
 ```text
-/tmp/content-engine-telegram-chat-id
+/runlocal
 ```
 
-This lets later scheduled jobs notify the same Telegram chat even though the scheduler itself runs independently of the bot's command handler.
+Runs the legacy direct local production/test path without publishing.
+
+### Other commands
+
+```text
+/research <topic>
+```
+
+Searches the web and sends the research through local Ollama.
+
+```text
+/content <topic>
+```
+
+Researches a topic and generates a content package.
+
+```text
+/ask <question>
+```
+
+Sends a question to local Ollama.
 
 ---
 
-# 4. Run the Single-Video Pipeline Manually
+## 4. Automatic Telegram Publication Notifications
 
-Normal production run:
+Scheduled production runs do **not** need to be started from Telegram in order to send notifications.
+
+The notification layer is:
+
+```text
+app/telegram_notify.py
+```
+
+After a scheduled production run, the notification reports the videos created and the publication results, including platform permalinks when available.
+
+The intended notification contents are:
+
+```text
+Videos created
+
+Title 1
+Title 2
+...
+
+Instagram publish complete
+<permalink(s)>
+
+YouTube publish complete
+<permalink(s)>
+```
+
+The notification system reads each video's `manifest.json` and reports successful and failed publication states independently of video generation.
+
+The Telegram notification destination is stored in a temporary chat-ID file used by the running system. A chat ID can also be supplied through the `CONTENT_ENGINE_TELEGRAM_CHAT_ID` environment variable.
+
+---
+
+## 5. Run the Single-Video Pipeline
+
+Normal run:
 
 ```bash
 python3 -m app.pipeline
 ```
 
-This will:
+The pipeline discovers a current trend, researches it, generates the video, and publishes it to both platforms.
 
-- collect current trends
-- select one topic
-- research it
-- generate the content package
-- create the video
-- publish the completed video to Instagram
-- publish the completed video to YouTube
+### Troubleshooting flags
 
-The output directory is named from the selected topic.
-
----
-
-## Single Pipeline Troubleshooting Flags
-
-Skip Instagram publishing:
+Disable Instagram publishing:
 
 ```bash
 python3 -m app.pipeline --noinstagram
 ```
 
-Skip YouTube publishing:
+Disable YouTube publishing:
 
 ```bash
 python3 -m app.pipeline --noyoutube
 ```
 
-Skip both platforms:
+Disable both publishers:
 
 ```bash
 python3 -m app.pipeline --noinstagram --noyoutube
 ```
 
-These flags affect publishing only. Video production still runs normally.
+These flags disable publishing only. Video production continues normally.
 
 ---
 
-# 5. Run the Four-Video Batch Manually
+## 6. Run the Four-Video Batch
 
-Normal batch run:
+Normal batch:
 
 ```bash
 python3 -m app.pipeline_batch
 ```
 
-The batch intentionally produces exactly four videos.
+The batch collects trends once, selects four topics, produces four videos, and publishes them.
 
-The batch collects trends once, selects four topics, applies the technology-topic diversity cap, then produces and publishes the four videos.
-
-The batch output directory is:
-
-```text
-output/runs/<timestamp>_batch/
-```
-
-Each video gets its own topic directory underneath the batch directory.
-
----
-
-## Batch Troubleshooting Flags
-
-Skip Instagram publishing:
+### Troubleshooting flags
 
 ```bash
 python3 -m app.pipeline_batch --noinstagram
 ```
 
-Skip YouTube publishing:
-
 ```bash
 python3 -m app.pipeline_batch --noyoutube
 ```
-
-Skip both platforms:
 
 ```bash
 python3 -m app.pipeline_batch --noinstagram --noyoutube
 ```
 
-Again, these flags only disable publishing. Production continues normally.
+Again, these flags affect publishing only.
 
 ---
 
-# 6. Publish an Existing Video to Instagram
+## 7. Publish an Existing Video to Instagram
 
-Instagram publishing is intentionally available as a standalone module so a failed publisher does **not** require rerunning the entire content pipeline.
-
-Run:
+The Instagram publisher is intentionally standalone so publishing can be tested without rerunning production.
 
 ```bash
 python3 -m app.publish_instagram "/path/to/final_short.mp4"
 ```
 
-The publisher locates the video's `manifest.json` and uses the media server/Tailscale Funnel URL to make the video available to Instagram.
+It locates the video's manifest and uses the media server/Tailscale Funnel URL to make the video available to Instagram.
 
 ---
 
-# 7. Publish an Existing Video to YouTube
+## 8. Publish an Existing Video to YouTube
 
-YouTube publishing is also standalone for easy troubleshooting.
-
-Run:
+The YouTube publisher is also standalone:
 
 ```bash
 python3 -m app.publish_youtube "/path/to/final_short.mp4"
 ```
 
-The YouTube publisher reads the video's manifest for its title/metadata and uploads the video.
+It reads the video's manifest for title/metadata and uploads the video.
 
-Vertical short-form videos are uploaded through the normal YouTube video-upload flow; YouTube subsequently categorizes eligible short-form uploads as Shorts after processing.
+Eligible vertical short-form uploads are categorized by YouTube as Shorts after processing.
 
 ---
 
-# 8. Test the Publishers Without Running Production
+## 9. Troubleshoot Publishers Independently
 
-If a video has already been created, **do not rerun the pipeline just to troubleshoot publishing.**
+If video generation succeeds but publishing fails, **do not rerun the entire production pipeline.**
 
-Instagram only:
+Test Instagram directly:
 
 ```bash
 python3 -m app.publish_instagram "/path/to/final_short.mp4"
 ```
 
-YouTube only:
+Test YouTube directly:
 
 ```bash
 python3 -m app.publish_youtube "/path/to/final_short.mp4"
 ```
 
-This makes the publisher components independently testable.
+This separation is intentional: generation and publication can be debugged independently.
 
 ---
 
-# 9. Verify the Services
+## 10. Verify Services
 
-Check that the media server is running:
+Check the media server:
 
 ```bash
 ps -axo pid=,command= | grep 'app.media_server' | grep -v grep
 ```
 
-Check that the Telegram bot is running:
+Check Telegram:
 
 ```bash
 ps -axo pid=,command= | grep 'app.telegram_bot' | grep -v grep
@@ -298,56 +292,21 @@ Check Tailscale Funnel:
 tailscale funnel status
 ```
 
-Check the scheduler:
+Check scheduler PID:
 
 ```bash
 cat /tmp/content-engine-scheduler.pid
 ```
 
-Then verify that PID is alive:
+Check whether the scheduler PID is alive:
 
 ```bash
 kill -0 "$(cat /tmp/content-engine-scheduler.pid)"
 ```
 
-View scheduler output:
-
-```bash
-tail -50 /tmp/content-engine-scheduler.log
-```
-
-`run.sh` performs the service checks automatically when it starts.
-
 ---
 
-# 10. Telegram Publication Notifications
-
-The scheduled pipelines run independently of the Telegram bot, but publication results are reported back through Telegram after each scheduled run.
-
-The notification layer is:
-
-```text
-app/telegram_notify.py
-```
-
-It reads completed run manifests and reports:
-
-- video title
-- YouTube upload status and permalink
-- Instagram upload status and permalink when available
-- platform failures without marking a successful video generation as failed
-
-Run the notifier manually for an existing production run if needed:
-
-```bash
-python3 -m app.telegram_notify "/path/to/output/runs/<run-directory>"
-```
-
-If no Telegram chat ID has been recorded yet, the notifier safely skips the message. Send `/run` from the Telegram bot once to establish the notification destination.
-
----
-
-# 11. Service Logs
+## 11. Logs
 
 Media server:
 
@@ -367,19 +326,15 @@ Scheduler:
 /tmp/content-engine-scheduler.log
 ```
 
-View the latest media-server log output:
+Useful commands:
 
 ```bash
 tail -50 /tmp/content-engine-media-server.log
 ```
 
-View the latest Telegram log output:
-
 ```bash
 tail -50 /tmp/content-engine-telegram-bot.log
 ```
-
-View the latest scheduler output:
 
 ```bash
 tail -50 /tmp/content-engine-scheduler.log
@@ -387,51 +342,42 @@ tail -50 /tmp/content-engine-scheduler.log
 
 ---
 
-# 12. Output Structure
+## 12. Output Structure
 
-Production runs live under:
+Production output lives under:
 
 ```text
 output/runs/
 ```
 
-Single-video runs use the selected topic in the run directory name.
-
-Batch runs use:
+Each production run contains one or more video directories. Completed videos normally end in:
 
 ```text
-<timestamp>_batch/
+final_short.mp4
 ```
 
-A completed video normally ends at:
-
-```text
-.../final_short.mp4
-```
-
-The same video directory contains its:
+Each video directory also contains:
 
 ```text
 manifest.json
 ```
 
-The manifest is used by the publishing components for metadata and publishing state.
+The manifest stores metadata and publication state used by the publisher and notification layers.
 
 ---
 
-# 13. Typical Daily Workflow
+## 13. Typical Daily Workflow
 
-### Start the system from a terminal
+### Start from the terminal
 
 ```bash
-cd content-engine
 source contentVenv/bin/activate
 ./run.sh
 ```
 
-Leave that terminal running when starting `run.sh` manually.
+Leave the terminal open while the scheduler is running in the foreground.
 
-### Or start the scheduler from Telegram
+### Start the scheduler from Telegram
 
 If the media server and Telegram bot are already running:
 
@@ -439,231 +385,155 @@ If the media server and Telegram bot are already running:
 /run
 ```
 
-Then the scheduler runs in the background and the terminal does not need to remain open for that scheduler process.
+The scheduler is then detached and continues in the background.
 
-### Scheduler behavior
-
-At 10:00 AM:
-
-```bash
-python3 -m app.pipeline_batch
-```
-
-At 4:00 PM, 10:00 PM, and 4:00 AM:
-
-```bash
-python3 -m app.pipeline
-```
-
-The scheduler invokes the virtual-environment Python directly, so scheduled jobs do not depend on the shell currently having `contentVenv` activated.
-
----
-
-# 14. Manual Production Commands
-
-Single:
-
-```bash
-python3 -m app.pipeline
-```
-
-Single without Instagram:
-
-```bash
-python3 -m app.pipeline --noinstagram
-```
-
-Single without YouTube:
-
-```bash
-python3 -m app.pipeline --noyoutube
-```
-
-Single without either publisher:
-
-```bash
-python3 -m app.pipeline --noinstagram --noyoutube
-```
-
-Batch:
-
-```bash
-python3 -m app.pipeline_batch
-```
-
-Batch without Instagram:
-
-```bash
-python3 -m app.pipeline_batch --noinstagram
-```
-
-Batch without YouTube:
-
-```bash
-python3 -m app.pipeline_batch --noyoutube
-```
-
-Batch without either publisher:
-
-```bash
-python3 -m app.pipeline_batch --noinstagram --noyoutube
-```
-
----
-
-# 15. Telegram Commands
-
-```text
-/run
-```
-
-Start `./run.sh` and the production scheduler.
+### Stop the scheduler
 
 ```text
 /stop
 ```
 
-Stop the scheduler started by `/run`. Media server and Telegram bot stay online.
+### Check everything
 
 ```text
 /status
 ```
 
-Show Telegram, scheduler, and direct-run status.
+---
+
+## 14. Manual Production Reference
+
+### Single
+
+```bash
+python3 -m app.pipeline
+```
+
+### Single, no Instagram
+
+```bash
+python3 -m app.pipeline --noinstagram
+```
+
+### Single, no YouTube
+
+```bash
+python3 -m app.pipeline --noyoutube
+```
+
+### Single, no publishing
+
+```bash
+python3 -m app.pipeline --noinstagram --noyoutube
+```
+
+### Batch
+
+```bash
+python3 -m app.pipeline_batch
+```
+
+### Batch, no Instagram
+
+```bash
+python3 -m app.pipeline_batch --noinstagram
+```
+
+### Batch, no YouTube
+
+```bash
+python3 -m app.pipeline_batch --noyoutube
+```
+
+### Batch, no publishing
+
+```bash
+python3 -m app.pipeline_batch --noinstagram --noyoutube
+```
+
+---
+
+## 15. Telegram Quick Reference
 
 ```text
+/run
+Start ./run.sh + scheduler
+
+/stop
+Stop scheduler; leave media server and Telegram bot running
+
+/status
+Show Telegram, scheduler, LLM, and publishing status
+
 /runlocal
-```
+Legacy direct local test without publishing
 
-Run the legacy direct local-test production path without publishing.
-
-```text
 /research <topic>
-```
+Research a topic with local Ollama
 
-Search the web and send the research to local Ollama.
-
-```text
 /content <topic>
-```
+Generate a content package
 
-Research a topic and generate a content package directly through the bot.
-
-```text
 /ask <question>
+Ask local Ollama
 ```
-
-Send a question to local Ollama.
 
 ---
 
-# 16. Troubleshooting Philosophy
+## 16. Troubleshooting Philosophy
 
-The pipeline is deliberately split into independently testable components.
+The system is deliberately modular.
 
-If **topic selection** fails, troubleshoot the production pipeline.
+**Trend/topic selection fails:** troubleshoot the research/trends layer.
 
-If **research/content generation** fails, troubleshoot the production pipeline and Qwen/research inputs.
+**Research or content generation fails:** troubleshoot the research/content pipeline and local Ollama.
 
-If **video creation** succeeds but Instagram fails, run:
+**Video generation succeeds but Instagram fails:** run the standalone Instagram publisher.
 
-```bash
-python3 -m app.publish_instagram "/path/to/final_short.mp4"
-```
+**Video generation succeeds but YouTube fails:** run the standalone YouTube publisher.
 
-If **video creation** succeeds but YouTube fails, run:
+**Telegram stops responding:** inspect the Telegram log first.
 
-```bash
-python3 -m app.publish_youtube "/path/to/final_short.mp4"
-```
+**Scheduler fails:** inspect the scheduler log and scheduler PID.
 
-If the **scheduler** fails, inspect:
-
-```text
-/tmp/content-engine-scheduler.log
-```
-
-and verify:
-
-```bash
-cat /tmp/content-engine-scheduler.pid
-```
-
-Do not regenerate an already-successful video just because a publishing step failed.
+Do not regenerate a successful video merely because a publication step failed.
 
 ---
 
-# 17. Important Operational Notes
+## 17. Operational Notes
 
-- `run.sh` is the long-running service/scheduler entry point.
-- `run.sh` does not create production directories.
+- `run.sh` is the service and scheduler entry point.
+- `run.sh` does not manage production directories.
 - `pipeline.py` produces one video.
 - `pipeline_batch.py` produces four videos.
-- Instagram and YouTube publishers are separate modules.
-- `--noinstagram` and `--noyoutube` are production-pipeline troubleshooting switches.
-- Telegram `/run` starts `./run.sh`; it does not duplicate the scheduler logic.
-- Telegram `/stop` stops the scheduler while leaving media server and Telegram online.
-- Scheduled publication results are reported back to the Telegram chat that last used `/run`.
-- The scheduler is a foreground shell process when launched manually; when launched by Telegram it is detached into the background.
-- Keep the Mac awake/available for scheduled production. The scheduler is not a replacement for a system-level `launchd` service yet.
-- Do not start multiple copies of `run.sh`.
+- Instagram and YouTube publishing are separate modules.
+- `--noinstagram` and `--noyoutube` are publishing troubleshooting switches.
+- `/run` starts the scheduler; it does not duplicate scheduler logic.
+- `/stop` stops the scheduler while leaving the media server and Telegram bot running.
+- Scheduled runs can notify Telegram independently of an interactive `/run` command.
+- YouTube uploads are configured for public visibility.
+- Keep the Mac awake and available for scheduled production.
+- Do not run multiple copies of `run.sh`.
 
 ---
 
-# 18. Quick Reference
+## 18. Phase 1 Status
 
-```bash
-# Activate environment
-source contentVenv/bin/activate
+The current Phase 1 system includes:
 
-# Start services + scheduler from terminal
-./run.sh
+- automated trend discovery
+- topic ranking/selection
+- research and content generation
+- single-video production
+- four-video batch production
+- Instagram publishing
+- YouTube publishing
+- standalone Instagram publisher
+- standalone YouTube publisher
+- scheduler
+- Telegram remote scheduler controls
+- Telegram status reporting
+- Telegram publication notifications
+- publisher troubleshooting flags
 
-# One video
-python3 -m app.pipeline
-
-# One video, no Instagram
-python3 -m app.pipeline --noinstagram
-
-# One video, no YouTube
-python3 -m app.pipeline --noyoutube
-
-# One video, no publishing
-python3 -m app.pipeline --noinstagram --noyoutube
-
-# Four-video batch
-python3 -m app.pipeline_batch
-
-# Four-video batch, no Instagram
-python3 -m app.pipeline_batch --noinstagram
-
-# Four-video batch, no YouTube
-python3 -m app.pipeline_batch --noyoutube
-
-# Four-video batch, no publishing
-python3 -m app.pipeline_batch --noinstagram --noyoutube
-
-# Publish existing video to Instagram
-python3 -m app.publish_instagram "/path/to/final_short.mp4"
-
-# Publish existing video to YouTube
-python3 -m app.publish_youtube "/path/to/final_short.mp4"
-
-# Send publication report for an existing run
-python3 -m app.telegram_notify "/path/to/output/runs/<run-directory>"
-
-# Check Tailscale Funnel
-tailscale funnel status
-```
-
-### Telegram quick reference
-
-```text
-/run       Start ./run.sh + scheduler
-/stop      Stop scheduler
-/status    Show system/scheduler status
-/runlocal  Legacy direct local test
-/research  Research a topic
-/content   Generate a content package
-/ask       Ask local Ollama
-```
+The next major development phase is analytics-driven optimization: collect performance data from active videos, identify patterns in successful content, and use those signals to improve topic selection and content strategy while preserving the core focus on current news and timely stories.

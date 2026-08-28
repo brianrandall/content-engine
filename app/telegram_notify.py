@@ -50,9 +50,12 @@ def _instagram_permalink(media_id):
 
 def _load_manifests(run_dir: Path):
     manifests = []
+
     for manifest_path in sorted(run_dir.rglob("manifest.json")):
         try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest = json.loads(
+                manifest_path.read_text(encoding="utf-8")
+            )
         except (OSError, json.JSONDecodeError):
             continue
 
@@ -75,7 +78,35 @@ def _send_message(chat_id, text):
         },
         timeout=30,
     )
+
     response.raise_for_status()
+
+
+def _youtube_permalink(youtube):
+    url = youtube.get("url") or youtube.get("permalink")
+
+    if url:
+        return url
+
+    post_id = youtube.get("post_id")
+    if post_id:
+        return f"https://www.youtube.com/watch?v={post_id}"
+
+    return None
+
+
+def _instagram_permalink_from_manifest(instagram):
+    url = instagram.get("url") or instagram.get("permalink")
+
+    if url:
+        return url
+
+    post_id = instagram.get("post_id")
+
+    if post_id and instagram.get("status") == "published":
+        return _instagram_permalink(post_id)
+
+    return None
 
 
 def notify_run(run_dir: str | Path):
@@ -83,56 +114,89 @@ def notify_run(run_dir: str | Path):
     chat_id = _read_chat_id()
 
     if not chat_id:
-        print("Telegram notification skipped: no chat ID is known yet.")
+        print(
+            "Telegram notification skipped: "
+            "no chat ID is known yet."
+        )
         return False
 
     manifests = _load_manifests(run_dir)
+
     if not manifests:
-        print(f"Telegram notification skipped: no manifests found in {run_dir}")
+        print(
+            f"Telegram notification skipped: "
+            f"no manifests found in {run_dir}"
+        )
         return False
 
     lines = [
-        "🔥 CONTENT ENGINE RUN COMPLETE",
+        "🔥 CONTENT ENGINE",
         "",
-        f"Run: {run_dir.name}",
+        "VIDEO(S) CREATED",
         "",
     ]
 
     for index, (_, manifest) in enumerate(manifests, 1):
         title = manifest.get("title") or f"Video {index}"
-        social = manifest.get("social", {})
-        youtube = social.get("youtube", {})
-        instagram = social.get("instagram", {})
 
-        youtube_status = youtube.get("status", "unknown")
-        youtube_url = youtube.get("url")
-        if not youtube_url and youtube.get("post_id"):
-            youtube_url = f"https://www.youtube.com/watch?v={youtube['post_id']}"
+        social = manifest.get("social", {})
+        instagram = social.get("instagram", {})
+        youtube = social.get("youtube", {})
 
         instagram_status = instagram.get("status", "unknown")
-        instagram_url = instagram.get("url")
-        if instagram_status == "published" and instagram.get("post_id"):
-            instagram_url = instagram_url or _instagram_permalink(instagram["post_id"])
+        youtube_status = youtube.get("status", "unknown")
 
-        lines.append(f"🎬 {index}. {title}")
-        lines.append(
-            f"YouTube: {youtube_status}"
-            + (f"\n{youtube_url}" if youtube_url else "")
+        instagram_url = _instagram_permalink_from_manifest(
+            instagram
         )
-        lines.append(
-            f"Instagram: {instagram_status}"
-            + (f"\n{instagram_url}" if instagram_url else "")
-        )
+        youtube_url = _youtube_permalink(youtube)
+
+        lines.append(f"{index}. {title}")
         lines.append("")
 
-    _send_message(chat_id, "\n".join(lines).rstrip())
-    print(f"Telegram publication notification sent for {run_dir}")
+        if instagram_status == "published":
+            lines.append("📸 INSTAGRAM PUBLISH COMPLETE")
+            if instagram_url:
+                lines.append(instagram_url)
+        else:
+            lines.append(
+                f"📸 INSTAGRAM: {instagram_status}"
+            )
+
+        lines.append("")
+
+        if youtube_status == "published":
+            lines.append("📺 YOUTUBE PUBLISH COMPLETE")
+            if youtube_url:
+                lines.append(youtube_url)
+        else:
+            lines.append(
+                f"📺 YOUTUBE: {youtube_status}"
+            )
+
+        lines.append("")
+        lines.append("────────────────────")
+        lines.append("")
+
+    _send_message(
+        chat_id,
+        "\n".join(lines).rstrip(),
+    )
+
+    print(
+        f"Telegram publication notification sent for {run_dir}"
+    )
+
     return True
 
 
 def main():
     if len(sys.argv) != 2:
-        raise SystemExit("Usage: python3 -m app.telegram_notify /path/to/run_directory")
+        raise SystemExit(
+            "Usage: "
+            "python3 -m app.telegram_notify "
+            "/path/to/run_directory"
+        )
 
     notify_run(sys.argv[1])
 

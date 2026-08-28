@@ -16,7 +16,7 @@ from telegram.ext import (
 import ollama
 
 try:
-    from app.pipeline import run_pipeline
+    from app.pipeline_core import run_pipeline
 except ImportError:
     from pipeline import run_pipeline
 
@@ -76,6 +76,31 @@ RUN_SCRIPT = BASE_DIR / "run.sh"
 
 ACTIVE_RUN = None
 ACTIVE_RUN_LOCK = threading.Lock()
+
+
+# =========================================================
+# TELEGRAM CHAT PERSISTENCE
+# =========================================================
+
+def _remember_chat_id(update: Update):
+    """
+    Remember the Telegram chat that interacted with the bot.
+
+    This allows scheduled pipeline runs to send notifications even if
+    /run was never explicitly issued from Telegram.
+    """
+
+    chat = update.effective_chat
+    if chat is None:
+        return
+
+    try:
+        TELEGRAM_CHAT_ID_FILE.write_text(
+            str(chat.id),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        print(f"Warning: could not save Telegram chat ID: {exc}")
 
 
 # =========================================================
@@ -556,6 +581,7 @@ async def run_local(
     context: ContextTypes.DEFAULT_TYPE,
 ):
     """Legacy/direct local test command; /run is reserved for run.sh."""
+    _remember_chat_id(update)
     return await _start_direct_run(update, context, "local")
 
 
@@ -569,19 +595,14 @@ async def run(
 ):
     """Start the long-running ./run.sh scheduler."""
 
+    _remember_chat_id(update)
+
     if context.args:
         await update.message.reply_text(
             "/run does not take arguments.\n\n"
             "It starts ./run.sh and its production scheduler."
         )
         return
-
-    chat = update.effective_chat
-    if chat is not None:
-        TELEGRAM_CHAT_ID_FILE.write_text(
-            str(chat.id),
-            encoding="utf-8",
-        )
 
     try:
         pid, started = await asyncio.to_thread(_start_scheduler)
@@ -615,6 +636,8 @@ async def stop(
 ):
     """Stop ./run.sh without stopping the media server or Telegram bot."""
 
+    _remember_chat_id(update)
+
     try:
         stopped, message = await asyncio.to_thread(_stop_scheduler)
     except Exception as exc:
@@ -642,6 +665,8 @@ async def research(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
+    _remember_chat_id(update)
+
     query = " ".join(context.args)
 
     if not query:
@@ -672,6 +697,8 @@ async def status(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
+    _remember_chat_id(update)
+
     with ACTIVE_RUN_LOCK:
         run_state = ACTIVE_RUN
 
@@ -717,6 +744,8 @@ async def ask(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
+    _remember_chat_id(update)
+
     question = " ".join(context.args)
 
     if not question:
@@ -741,6 +770,8 @@ async def content(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
+    _remember_chat_id(update)
+
     query = " ".join(context.args)
 
     if not query:
