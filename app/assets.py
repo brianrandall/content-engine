@@ -18,6 +18,11 @@ BLOCKED_DOMAINS = [
     "pinimg.com",
 ]
 
+# Tiny HTTP error pages, tracking pixels, and placeholder responses can
+# sometimes arrive with a 200 status. Anything smaller than this is not
+# useful as a production visual and should be rejected before FFmpeg sees it.
+MIN_IMAGE_BYTES = 2048
+
 
 def clean_search_query(query: str) -> str:
     """
@@ -40,6 +45,87 @@ def clean_search_query(query: str) -> str:
     query = re.sub(r"\s+", " ", query)
 
     return query.strip()
+
+
+def _detect_image_format(content: bytes) -> str | None:
+    """Identify common raster-image formats from their file signatures."""
+
+    if content.startswith(b"\xff\xd8\xff"):
+        return "jpeg"
+
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+
+    if content.startswith((b"GIF87a", b"GIF89a")):
+        return "gif"
+
+    if (
+        len(content) >= 12
+        and content[:4] == b"RIFF"
+        and content[8:12] == b"WEBP"
+    ):
+        return "webp"
+
+    # AVIF/HEIF-family files use an ISO BMFF ftyp box. FFmpeg can usually
+    # decode these even when the output filename happens to end in .jpg.
+    if len(content) >= 12 and content[4:8] == b"ftyp":
+        brand = content[8:12]
+        if brand in {
+            b"avif",
+            b"avis",
+            b"heic",
+            b"heix",
+            b"hevc",
+            b"hevx",
+            b"mif1",
+            b"msf1",
+        }:
+            return "avif/heif"
+
+    return None
+
+
+def _validate_image_response(response: requests.Response) -> str:
+    """
+    Validate that a successful HTTP response is really usable image data.
+
+    A 200 response is not enough: some hosts return HTML/error bodies or tiny
+    placeholders while still reporting success. Reject those here so get_image
+    can automatically continue to the next search result.
+    """
+
+    content = response.content
+    content_type = response.headers.get("Content-Type", "")
+    normalized_type = content_type.split(";", 1)[0].strip().lower()
+
+    if not content:
+        raise requests.RequestException("Downloaded image was empty.")
+
+    if len(content) < MIN_IMAGE_BYTES:
+        raise requests.RequestException(
+            f"Downloaded image was only {len(content)} bytes; "
+            f"minimum is {MIN_IMAGE_BYTES}."
+        )
+
+    if normalized_type and not normalized_type.startswith("image/"):
+        raise requests.RequestException(
+            f"Response Content-Type was not an image: {normalized_type}"
+        )
+
+    image_format = _detect_image_format(content)
+    if image_format is None:
+        preview = content[:80].lstrip().lower()
+
+        if preview.startswith((b"<html", b"<!doctype html", b"<?xml")):
+            raise requests.RequestException(
+                "Image URL returned HTML/XML instead of image data."
+            )
+
+        raise requests.RequestException(
+            "Downloaded bytes did not match a supported image signature."
+        )
+
+    return image_format
 
 
 def search_images(query: str, max_results: int = 12):
@@ -141,12 +227,10 @@ def download_image(
 
     response.raise_for_status()
 
-    # Make sure we actually received something.
-    if not response.content:
-        raise requests.RequestException(
-            "Downloaded image was empty."
-        )
+    image_format = _validate_image_response(response)
 
+    # Only write the file after validation succeeds. This prevents a failed
+    # candidate from leaving a bogus .jpg behind for the renderer.
     output_path.write_bytes(response.content)
 
     metadata_path = output_path.with_suffix(".json")
@@ -156,6 +240,9 @@ def download_image(
         "image_url": url,
         "source_url": source_url,
         "title": title,
+        "content_type": response.headers.get("Content-Type"),
+        "detected_format": image_format,
+        "bytes": len(response.content),
     }
 
     metadata_path.write_text(
@@ -174,8 +261,9 @@ def get_image(
     """
     Find and download the first usable image.
 
-    Search failures and individual download failures do not
-    crash the pipeline.
+    Search failures, invalid HTTP image responses, and individual download
+    failures do not crash the pipeline. Bad candidates are skipped and the
+    next search result is tried automatically.
     """
 
     cleaned_query = clean_search_query(query)
@@ -199,7 +287,7 @@ def get_image(
         )
 
         try:
-            return download_image(
+            image_path = download_image(
                 result["url"],
                 filename,
                 output_dir=output_dir,
@@ -207,10 +295,17 @@ def get_image(
                 title=result.get("title"),
             )
 
+            print(
+                f"   ✅ Image {index} validated and saved: "
+                f"{image_path.name}"
+            )
+
+            return image_path
+
         except requests.RequestException as error:
 
             print(
-                f"   ⚠️ Image {index} failed: {error}"
+                f"   ⚠️ Image {index} rejected: {error}"
             )
 
             errors.append(
@@ -228,7 +323,7 @@ def get_image(
             )
 
     print(
-        f"   ⚠️ Could not download any images for: "
+        f"   ⚠️ Could not download any valid images for: "
         f"{cleaned_query}"
     )
 
